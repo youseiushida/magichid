@@ -6,7 +6,9 @@ Report ID and by name so the client can validate payload lengths and resolve nam
 import json
 import os
 
-_JSON = os.path.join(os.path.dirname(__file__), "..", "reports.json")
+# The report table lives in the contract dir (spec/), not in this deletable client.
+# A client may also fetch the same table at runtime via GET_CAPS instead of this file.
+_JSON = os.path.join(os.path.dirname(__file__), "..", "..", "spec", "reports.json")
 
 
 class ReportInfo:

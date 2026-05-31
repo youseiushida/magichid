@@ -1,6 +1,5 @@
 # MagicHID 透過HIDブリッジ — 設計書（実装前 / Design v0.1）
 
-> ステータス: **設計のみ。コードは未実装。** 本書で合意できたら実装フェーズへ。
 
 ---
 
@@ -169,21 +168,21 @@ STATUS flags（例）: bit0=mounted, bit1=suspended, bit2=ep_ready, bit3=watchdo
 
 ---
 
-## 6. レポートレイアウトの「単一情報源」（重要）
+## 6. 単一情報源と「契約 vs 参考実装」（重要）
 
-操作PCと ESP32 が**同じバイト配置**を共有しないと 1:1 が崩れる。`hid_descriptor.h` を唯一の真実とし、
-そこから機械生成する：
+ドリフトを防ぐため、**2系統の単一情報源**から機械生成する：
 
 ```
- hid_descriptor.h ──[ビルド時パーサ]──▶ reports.json (ReportID → {size, fields[], usage})
-                                          │
-                          ┌───────────────┼────────────────┐
-                          ▼                                ▼
-              firmware: ReportID→size 表        client: 各デバイスのエンコーダ/デコーダ
+ hid_descriptor.h   ─[gen_reports.py]──▶ mh_reports.h(C) + spec/reports.json   (ReportID→サイズ表)
+ spec/protocol.yaml ─[gen_protocol.py]─▶ mh_protocol_defs.h(C) + _defs.py(Py) + spec/protocol_vectors.txt
 ```
 
-- 二重定義を避け、descriptor を直せば両側が自動追従。
-- 当面は手書き表でも可（小さい）。本格運用ではコード生成を推奨。
+- **定数（メッセージ型/フラグ/サイズ）** は `protocol.yaml` から C/Python へ生成 → 構造的に不一致不能。
+- **framing ロジック（COBS/CRC）** は C(`mh_protocol.h`)・Py(`protocol.py`) に手書きし、
+  **golden ベクタ `spec/protocol_vectors.txt` で適合性検証**（C・Py 双方をチェック＝二段構え）。
+- **契約 ＝ `spec/`（PROTOCOL.md + protocol.yaml + reports.json + vectors）**。これだけで
+  任意言語のクライアントを実装できる。`reference-client/`(Python) は**参考実装で削除可能**。
+  デバイス／契約は reference-client に一切依存しない（レポート表は `GET_CAPS` で実行時取得も可）。
 
 ---
 

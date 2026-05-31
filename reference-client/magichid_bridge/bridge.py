@@ -24,6 +24,7 @@ class HIDBridge:
         self.on_host_event = on_host_event      # callback(report_id, report_type, data)
         self.on_log = on_log                    # callback(str)
         self.flags = 0                          # latest STATUS flags
+        self.proto_version = None                # device protocol version (from STATUS)
         self._ser = None
         self._running = False
         self._reader = None
@@ -95,6 +96,7 @@ class HIDBridge:
                 p[1] = ("nack", reason); p[0].set()
         elif mtype == P.T_STATUS:
             self.flags = payload[0] if payload else 0
+            self.proto_version = payload[1] if len(payload) > 1 else None
             self._status_ev.set()
         elif mtype == P.T_HOST_EVENT:
             if len(payload) >= 2 and self.on_host_event:

@@ -23,7 +23,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 HID_H = os.path.join(ROOT, "hid_descriptor.h")
 OUT_H = os.path.join(ROOT, "mh_reports.h")
-OUT_JSON = os.path.join(ROOT, "client", "reports.json")
+OUT_JSON = os.path.join(ROOT, "spec", "reports.json")
 
 # Report ID -> HUT Usage Page (informational; for client convenience / debugging).
 PAGE = {

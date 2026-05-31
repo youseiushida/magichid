@@ -1,46 +1,14 @@
-"""MagicHID UART wire protocol (mirror of ../../mh_protocol.h).
+"""MagicHID UART wire protocol -- framing ALGORITHM (COBS + CRC16).
+
+Constants come from _defs.py, which is GENERATED from spec/protocol.yaml by
+tools/gen_protocol.py -- so message types/flags/sizes never drift from the firmware.
+The algorithm below is hand-written (same as mh_protocol.h in C);
+spec/protocol_vectors.txt + tools/test_protocol_parity.py prove the two agree byte-for-byte.
 
 Frame on wire:  COBS( [TYPE][SEQ][PAYLOAD..][CRC16 LE] ) + 0x00
-CRC16 is CCITT (poly 0x1021, init 0xFFFF) over TYPE..PAYLOAD.
-
-Keep this file byte-compatible with mh_protocol.h; tools/test_protocol_parity.py
-checks the C and Python implementations agree.
+CRC16 = CCITT (poly 0x1021, init 0xFFFF) over TYPE..PAYLOAD.
 """
-
-DELIM = 0x00
-
-# operator PC -> ESP32
-T_SEND_REPORT = 0x01
-T_PING = 0x02
-T_RELEASE_ALL = 0x03
-T_GET_CAPS = 0x04
-T_SET_IDENTITY = 0x05
-T_SET_FEATURE = 0x06
-
-# ESP32 -> operator PC
-T_STATUS = 0x81
-T_ACK = 0x82
-T_NACK = 0x83
-T_HOST_EVENT = 0x84
-T_LOG = 0x85
-T_CAPS = 0x86
-
-# STATUS flags
-ST_MOUNTED = 0x01
-ST_SUSPENDED = 0x02
-ST_READY = 0x04
-ST_WATCHDOG = 0x08
-
-# NACK reasons
-NACK_REASONS = {
-    1: "BAD_CRC", 2: "BAD_LEN", 3: "UNKNOWN_ID", 4: "NOT_READY",
-    5: "NOT_SENDABLE", 6: "BAD_FRAME", 7: "TOO_BIG",
-}
-
-# HID report types (from USB HID spec)
-HID_INPUT, HID_OUTPUT, HID_FEATURE = 1, 2, 3
-
-HID_MAX_PAYLOAD = 63   # CFG_TUD_HID_EP_BUFSIZE(64) - 1 report-id byte
+from ._defs import *          # noqa: F401,F403  (T_*, ST_*, NACK_REASONS, HID_*, DELIM, sizes)
 
 
 def crc16(data: bytes) -> int:

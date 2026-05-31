@@ -19,37 +19,46 @@
 
 ```
  操作PC + client ──UART(framed)──▶ ESP32-S3 ──USB HID(native)──▶ 被操作デバイス
-   (Python; 脳)                     (中継+安全装置)                (PC/スマホ/Switch)
+   (任意言語; 脳)                    (中継+安全装置)                (PC/スマホ/Switch)
 ```
 
-| ファイル | 役割 |
-|---|---|
-| `hid_descriptor.h` | 被操作デバイスに提示する“正体”（全35 Report ID の記述子） |
-| `mh_reports.h` | 各 Report ID のサイズ表（`tools/gen_reports.py` が自動生成） |
-| `mh_protocol.h` | UART プロトコル（COBS + CRC16）。ファーム/クライアント共通定義 |
-| `magichid.ino` | ファーム本体：列挙・中継・双方向・安全装置・identity/プロファイル |
-| `tools/gen_reports.py` | `hid_descriptor.h` → `mh_reports.h` / `client/reports.json`（単一情報源） |
-| `client/magichid_bridge/` | 操作PCクライアント（Python）：framing・セッション・信頼配送・統一API |
-| `client/example.py` | 使用例（キーボード/マウス/Consumer を同一APIで） |
-| `DESIGN.md` | 設計書（プロトコル・責務境界・全部入りの決定） |
+**契約（contract）＝ `spec/` が本体**で、これさえあれば誰でも任意言語でクライアントを作れます。
+`reference-client/`（Python）は**参考実装であり、削除可能**です。
+
+| 区分 | ファイル | 役割 |
+|---|---|---|
+| **契約** | `spec/PROTOCOL.md` | ワイヤ仕様（言語非依存・権威）。これだけでクライアント実装可能 |
+| **契約** | `spec/protocol.yaml` | 定数の**単一ソース**。`gen_protocol.py` が各言語へ展開 |
+| **契約** | `spec/reports.json` | Report ID のサイズ表（`GET_CAPS` で実行時取得も可） |
+| **契約** | `spec/protocol_vectors.txt` | 適合性ベクタ（自作 codec を byte 単位で検証） |
+| **ファーム** | `magichid.ino` | 本体：列挙・中継・双方向・安全装置・identity/プロファイル |
+| **ファーム** | `hid_descriptor.h` | 被操作に提示する“正体”（全35 Report ID の記述子） |
+| **ファーム** | `mh_protocol.h` ＋ `mh_protocol_defs.h`[生成] | UART codec（COBS+CRC16）＋生成定数 |
+| **ファーム** | `mh_reports.h` [生成] | レポートサイズ表（C） |
+| **ツール** | `tools/gen_protocol.py` | `protocol.yaml` → `mh_protocol_defs.h` / `_defs.py` / vectors |
+| **ツール** | `tools/gen_reports.py` | `hid_descriptor.h` → `mh_reports.h` / `spec/reports.json` |
+| **参考(削除可)** | `reference-client/` | Python 参考クライアント（framing・セッション・信頼配送・統一API） |
+| **設計** | `DESIGN.md` | 設計書（プロトコル・責務境界・全部入りの決定） |
 
 ## ビルドと実行
 
-### 1. レポート表の生成（記述子を変えたら毎回）
+### 1. 生成（記述子 or プロトコルを変えたら毎回）
 ```
-python tools/gen_reports.py
+python tools/gen_reports.py     # hid_descriptor.h  -> mh_reports.h, spec/reports.json
+python tools/gen_protocol.py    # spec/protocol.yaml -> mh_protocol_defs.h, _defs.py, vectors
 ```
-`hid_descriptor.h` を解析し `mh_reports.h` と `client/reports.json` を再生成します。
 
 ### 2. ファームウェア（ESP32-S3 / Arduino IDE）
 - Tools → USB Stack: **Adafruit TinyUSB**（`Serial0` = UART0 を操作リンクに使用）。
 - `magichid.ino` を書き込み。**操作PC は UART0**（基板の COM/UART ポート, 1 Mbps）へ、
   **被操作デバイスはネイティブ USB** ポートへ接続。接続順は不問（ハンドシェイクが吸収）。
 
-### 3. クライアント（操作PC / Python）
+### 3. クライアント
+- **自作する場合**：`spec/PROTOCOL.md` ＋ `spec/protocol_vectors.txt` だけで任意言語で実装可。
+- **参考実装(Python)を使う場合**：
 ```
-pip install -r client/requirements.txt
-python client/example.py COM5          # COM5 は ESP32 の UART ポート
+pip install -r reference-client/requirements.txt
+python reference-client/example.py COM5     # COM5 は ESP32 の UART ポート
 ```
 ```python
 from magichid_bridge import HIDBridge, BY_NAME
@@ -59,14 +68,14 @@ with HIDBridge("COM5") as b:
     b.send_report("KEYBOARD", bytes(8))                     # 離す（全状態送信）
 ```
 - `send_report(report, data)` は Report ID（番号 or 名前）＋生バイト。**全35種を同一API**で扱う。
-- 信頼配送（ACK/再送）は既定 ON、`reliable=False` で投げっぱなしも可。
-- 終了時に自動 `release_all()`（押しっぱなし防止）。
+- 信頼配送（ACK/再送）は既定 ON、`reliable=False` で投げっぱなしも可。終了時に自動 `release_all()`。
 
-### 4. 検証（任意）
+### 4. 適合性検証（任意）
 ```
-PYTHONPATH=client python tools/test_protocol_parity.py        # Python 側フレーム
-gcc -I. tools/test_protocol_parity.c -o parity && ./parity    # C 側フレーム（差分0で一致）
+gcc -I. tools/test_protocol_parity.c -o parity && ./parity spec/protocol_vectors.txt
+PYTHONPATH=reference-client python tools/test_protocol_parity.py
 ```
+両者が golden ベクタ（`spec/protocol_vectors.txt`）に一致 ＝ C/Python/サードパーティが同一契約に適合。
 
 ## 動作確認した環境
 

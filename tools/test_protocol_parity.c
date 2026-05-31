@@ -1,38 +1,70 @@
-// Parity test: emits frames/COBS using the firmware's mh_protocol.h so we can diff
-// against the Python implementation. Build: gcc -I.. test_protocol_parity.c
+// Conformance test (C): verify the firmware codec (mh_protocol.h) against the golden
+// vectors in spec/protocol_vectors.txt. The Python client is checked against the SAME
+// file by test_protocol_parity.py, so both conform to one contract.
+//   Build:  gcc -I.. tools/test_protocol_parity.c -o parity
+//   Run  :  ./parity spec/protocol_vectors.txt
 #include "mh_protocol.h"
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
-static void hex(const uint8_t *b, uint32_t n) {
-  for (uint32_t i = 0; i < n; i++) printf("%02x", b[i]);
-  printf("\n");
+static size_t unhex(const char *s, uint8_t *out) {
+  if (strcmp(s, "-") == 0) return 0;
+  size_t n = strlen(s) / 2;
+  for (size_t i = 0; i < n; i++) {
+    unsigned v;
+    sscanf(s + 2 * i, "%2x", &v);
+    out[i] = (uint8_t)v;
+  }
+  return n;
 }
 
-int main(void) {
-  uint8_t out[MH_COBS_MAX];
-  uint32_t n;
+static void tohex(const uint8_t *b, size_t n, char *out) {
+  for (size_t i = 0; i < n; i++) sprintf(out + 2 * i, "%02x", b[i]);
+  out[2 * n] = 0;
+}
 
-  uint8_t p1[] = {7, 0, 0, 4, 0, 0, 0, 0, 0};
-  printf("FRAME "); n = mh_build_frame(0x01, 5, p1, sizeof(p1), out); hex(out, n);
+int main(int argc, char **argv) {
+  const char *path = (argc > 1) ? argv[1] : "spec/protocol_vectors.txt";
+  FILE *f = fopen(path, "r");
+  if (!f) { perror("open vectors"); return 2; }
 
-  uint8_t p2[140];
-  for (int i = 0; i < 140; i++) p2[i] = (uint8_t)(i * 7 + 1);
-  printf("FRAME "); n = mh_build_frame(0x86, 1, p2, sizeof(p2), out); hex(out, n);
+  char line[8192], kind[16], s1[4096], s2[4096];
+  int total = 0, fails = 0;
+  unsigned t, seq;
+  while (fgets(line, sizeof line, f)) {
+    if (line[0] == '#' || line[0] == '\n' || line[0] == '\r') continue;
+    if (sscanf(line, "%15s", kind) != 1) continue;
 
-  uint8_t dummy = 0;
-  printf("FRAME "); n = mh_build_frame(0x02, 0, &dummy, 0, out); hex(out, n);
-
-  uint8_t p4[] = {8, 2, 0, 0, 0, 0};
-  printf("FRAME "); n = mh_build_frame(0x84, 0, p4, sizeof(p4), out); hex(out, n);
-
-  // COBS-only with > 254 nonzero bytes to exercise the 0xFF code path
-  uint8_t big[300];
-  for (int i = 0; i < 300; i++) big[i] = (uint8_t)(1 + (i % 200));
-  uint8_t enc[400];
-  uint32_t en = mh_cobs_encode(big, 300, enc);
-  printf("COBS %u ", en); hex(enc, en);
-  uint8_t dec[400];
-  int32_t dn = mh_cobs_decode(enc, en, dec);
-  printf("DEC %d ", dn); hex(dec, dn);
-  return 0;
+    if (strcmp(kind, "FRAME") == 0) {
+      if (sscanf(line, "%*s %x %u %4095s %4095s", &t, &seq, s1, s2) != 4) continue;
+      uint8_t pl[4096];
+      size_t pn = unhex(s1, pl);
+      uint8_t out[MH_COBS_MAX];
+      uint32_t on = mh_build_frame((uint8_t)t, (uint8_t)seq, pl, pn, out);
+      char hx[2 * MH_COBS_MAX + 1];
+      tohex(out, on, hx);
+      total++;
+      if (strcmp(hx, s2) != 0) {
+        fails++;
+        printf("FRAME mismatch t=%x seq=%u\n  exp %s\n  got %s\n", t, seq, s2, hx);
+      }
+    } else if (strcmp(kind, "COBS") == 0) {
+      if (sscanf(line, "%*s %4095s %4095s", s1, s2) != 2) continue;
+      uint8_t in[4096];
+      size_t inn = unhex(s1, in);
+      uint8_t enc[8192];
+      uint32_t en = mh_cobs_encode(in, inn, enc);
+      char hx[16400];
+      tohex(enc, en, hx);
+      total++;
+      if (strcmp(hx, s2) != 0) {
+        fails++;
+        printf("COBS mismatch\n  exp %s\n  got %s\n", s2, hx);
+      }
+    }
+  }
+  fclose(f);
+  printf("C conformance: %d/%d vectors OK\n", total - fails, total);
+  return fails ? 1 : 0;
 }

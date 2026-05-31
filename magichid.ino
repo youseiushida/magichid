@@ -100,7 +100,10 @@ static uint8_t status_flags() {
   return f;
 }
 
-static void send_status() { uint8_t f = status_flags(); mh_tx(MH_T_STATUS, 0, &f, 1); }
+static void send_status() {
+  uint8_t p[2] = { status_flags(), MH_PROTO_VERSION };   // [flags][proto_version]
+  mh_tx(MH_T_STATUS, 0, p, 2);
+}
 static void send_ack(uint8_t seq) { mh_tx(MH_T_ACK, seq, nullptr, 0); }
 static void send_nack(uint8_t seq, uint8_t reason) {
   uint8_t p[1] = { reason }; mh_tx(MH_T_NACK, seq, p, 1);
