@@ -53,9 +53,10 @@ def mouse(b, dx, dy):
 
 
 def main():
-    port = sys.argv[1] if len(sys.argv) > 1 else "COM8"
-    print(f"[*] {port} に接続中 ...")
+    port = sys.argv[1] if len(sys.argv) > 1 else None   # 引数なし -> 自動検出
+    print("[*] " + ("ポート自動検出中 ..." if port is None else f"{port} に接続中 ..."))
     with HIDBridge(port) as b:
+        print(f"[+] 接続先: {b.port}")
         if not b.wait_ready(timeout=10):
             print("[!] 被操作デバイス(native USB)が READY ではありません。両方挿さっているか確認してください。")
             print(f"    flags={b.flags} (MOUNTED={bool(b.flags & P.ST_MOUNTED)}, READY={bool(b.flags & P.ST_READY)})")

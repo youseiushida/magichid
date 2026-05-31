@@ -14,10 +14,10 @@ from .protocol import (
     HID_INPUT, HID_OUTPUT, HID_FEATURE, HID_MAX_PAYLOAD,
 )
 from .reports import BY_ID, BY_NAME, ReportInfo, resolve, load_reports
-from .bridge import HIDBridge, NackError
+from .bridge import HIDBridge, NackError, autodetect, find_ports
 
 __all__ = [
-    "HIDBridge", "NackError", "protocol",
+    "HIDBridge", "NackError", "autodetect", "find_ports", "protocol",
     "BY_ID", "BY_NAME", "ReportInfo", "resolve", "load_reports",
     "build_frame", "parse_frame", "Deframer", "crc16", "cobs_encode", "cobs_decode",
     "ST_MOUNTED", "ST_READY", "ST_SUSPENDED", "ST_WATCHDOG",

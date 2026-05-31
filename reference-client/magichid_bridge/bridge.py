@@ -17,9 +17,66 @@ class NackError(Exception):
         self.reason = reason
 
 
+# USB-serial bridge VIDs, used to rank auto-detect candidates (lower = probe first).
+# 0x1A86 = WCH (CH34x), 0x10C4 = SiLabs (CP210x), 0x0403 = FTDI, 0x303A = Espressif native CDC.
+_BRIDGE_VID_RANK = {0x1A86: 0, 0x10C4: 1, 0x0403: 1, 0x303A: 3}
+
+
+def _probe_port(port, baud, timeout):
+    """Open `port` and return True if a running MagicHID answers PING with STATUS."""
+    import serial
+    try:
+        ser = serial.Serial(port, baud, timeout=0.1)
+    except Exception:
+        return False
+    try:
+        time.sleep(2.2)                          # allow possible auto-reset + boot to reach baud
+        ser.reset_input_buffer()
+        deframer = P.Deframer()
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            ser.write(P.build_frame(P.T_PING, 1))
+            time.sleep(0.12)
+            data = ser.read(ser.in_waiting or 1)
+            for mtype, _seq, _payload in deframer.feed(data):
+                if mtype == P.T_STATUS:
+                    return True
+        return False
+    finally:
+        ser.close()
+
+
+def find_ports(baud=1_000_000, timeout=2.0, all_matches=False):
+    """Probe serial ports for a running MagicHID bridge (PING -> STATUS confirms identity).
+
+    Candidates are USB-serial ports (skips Bluetooth virtual COMs), ranked by likely
+    bridge VID so the real device is usually probed first. Returns the first matching
+    port name, or (all_matches=True) a list of all matches.
+    """
+    import serial.tools.list_ports as list_ports
+    cands = [p for p in list_ports.comports() if p.vid is not None]
+    cands.sort(key=lambda p: _BRIDGE_VID_RANK.get(p.vid, 2))
+    found = []
+    for p in cands:
+        if _probe_port(p.device, baud, timeout):
+            if not all_matches:
+                return p.device
+            found.append(p.device)
+    return found if all_matches else None
+
+
+def autodetect(baud=1_000_000, timeout=2.0):
+    """Return the COM port of a connected MagicHID device, or raise RuntimeError."""
+    port = find_ports(baud=baud, timeout=timeout)
+    if port is None:
+        raise RuntimeError("MagicHID device not found on any serial port "
+                           "(flashed? UART cable connected?)")
+    return port
+
+
 class HIDBridge:
-    def __init__(self, port, baud=1_000_000, on_host_event=None, on_log=None):
-        self.port = port
+    def __init__(self, port=None, baud=1_000_000, on_host_event=None, on_log=None):
+        self.port = port                        # None -> autodetect() on open()
         self.baud = baud
         self.on_host_event = on_host_event      # callback(report_id, report_type, data)
         self.on_log = on_log                    # callback(str)
@@ -39,6 +96,8 @@ class HIDBridge:
     # ---- lifecycle ----
     def open(self):
         import serial                           # lazy: package importable without pyserial
+        if self.port is None:
+            self.port = autodetect(self.baud)   # probe serial ports for a responding MagicHID
         self._ser = serial.Serial(self.port, self.baud, timeout=0.05)
         self._running = True
         self._reader = threading.Thread(target=self._read_loop, daemon=True)
