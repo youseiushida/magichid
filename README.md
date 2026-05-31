@@ -181,6 +181,33 @@ Report ID なし・64 バイト固定、`TUD_HID_REPORT_DESC_FIDO_U2F(64)`）に
 特定の名乗りに対して選り好みすることがあるため、実機ターゲット（Switch / スマホ / 他PC）ごとに
 通るか **実測** し、必要なら **ターゲット別の単一記述子に切り出す** 運用が堅実です。
 
+### 5. Barcode(29) は Windows の「POS HID Barcode scanner」ドライバが当たり Error になる
+
+実機（Windows 11）で列挙すると、Report 29（Usage Page `0x8C` / Barcode Scanner）のノード**だけ**が
+デバイスマネージャーで **`POS HID Barcode scanner`（class: BarcodeScanner）＝ Error** になります（他 34 ページは `OK`）。
+
+- **原因（一次資料）**：Windows は USB 接続バーコードスキャナ用の **在庫(in-box)クラスドライバ**を持ち、これは
+  USB-IF の **「HID POS Scanner Usage Table (0x8C)」** に基づきます。Microsoft 公式曰く
+  *“Windows contains an in-box class driver for USB connected barcode scanners which is based on the HID POS
+  Scanner Usage Table (8c) specification … configure your scanner in **USB.HID.POS Scanner** mode.”*
+  （[Point of Service Hardware Support](https://learn.microsoft.com/en-us/windows/apps/develop/devices-sensors/pos/device-support)）。
+  本記述子はページ `0x8C` を名乗るため Windows が自動的にこの POS ドライバを束縛しますが、当方のレポートは
+  **[HUT 1.7](https://www.usb.org/sites/default/files/hut1_7.pdf) §32 の代表的サブセット**であって
+  *USB.HID.POS Scanner モードの完全な記述子*（§32.2 の *Scanned Data Report* 等の論理コレクション階層＋Symbology 等）
+  ではないため、ドライバが弾いて Error になります。
+- **これは HUT 準拠の不備ではなく、Windows POS クラスドライバ固有の要求**です。本プロジェクトはページを
+  **HUT §32 に忠実**に保つ方針で、**ベンダー固有化も Windows-POS 向けの作り込みも行いません**。
+- **影響範囲**：USB 列挙自体は成立し、firmware は Report 29 を送出可能。Error は「この Windows PC の POS
+  クラスドライバが当たらない」だけで、**他 34 ページの動作には無関係**。被操作側が別OS / 汎用HID で読むアプリ /
+  スマホ / Switch 等なら、この Windows 固有の POS ドライバ問題は発生しません。
+- **唯一の是正（HUT 準拠として実施済み）**：`Aiming/Pointer Mode (0x30)` は §32.3 で **Static Flag (SF)＝
+  スキャナ能力フラグ**、§32.2 で *Attribute Report = Feature report* と定義されます。誤って Output にしていたのを
+  **Feature に修正**しました（Windows を満たすための変更ではなく、記述子としての正しさの修正）。
+
+> POS スキャナとして **このPC上で** 動かしたい場合は、§32.2 の完全な論理コレクション構造（Scanned Data Report 等）
+> ＋必要に応じてベンダー実装が要ります。ドライバ作成は Microsoft の
+> [Barcode Scanner Driver Design Guide](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/_pos/index) 参照。
+
 ---
 
 ## 記述子の検証（実施済み）
@@ -192,12 +219,20 @@ Report ID なし・64 バイト固定、`TUD_HID_REPORT_DESC_FIDO_U2F(64)`）に
 - **全 Collection が均衡**（`0xA1` ↔ `0xC0` 一致、最大ネスト 2）
 - 全レポートの Input / Output / Feature ビット総和が **8 の倍数（バイト整列）**
 - **グローバルアイテムの “漏れ” なし**（各レポートが ReportSize / Count / LogicalMin / Max を自前で再宣言）
-- 全 Usage ID を HUT 1.7 原典と照合（1 件の値誤り Scales「Pound」0x5B→0x5C を修正済み）
+- 全 Usage ID を HUT 1.7 原典と照合し、Usage 種別の取り違えを是正済み：
+  Scales「Pound」値誤り 0x5B→0x5C／Barcode「Aiming/Pointer Mode」0x30 を Output→Feature
+  （§32.3 の Static Flag、§32.2 で Attribute Report=Feature）に修正
 
 ---
 
 ## Sources
 
+**一次資料（HID 仕様・OS ドライバ要件）**
+- [HID Usage Tables for USB 1.7 — USB-IF（原典）](https://www.usb.org/document-library/hid-usage-tables-17) ／ [直リンク PDF](https://www.usb.org/sites/default/files/hut1_7.pdf) ／ [HID 仕様一覧](https://www.usb.org/hid) — §32 Barcode Scanner Page (0x8C) 含む全 Usage の定義元
+- [Point of Service Hardware Support — Microsoft](https://learn.microsoft.com/en-us/windows/apps/develop/devices-sensors/pos/device-support) — Windows 在庫の「HID POS Scanner (0x8C)」barcode クラスドライバと `USB.HID.POS Scanner` モード要件（実機注意 #5 の根拠）
+- [Barcode Scanner Driver Design Guide — Microsoft](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/_pos/index) ／ [Barcode Scanner Driver Sample](https://learn.microsoft.com/en-us/windows-hardware/drivers/pos/barcode-scanner-driver) — POS バーコードドライバの作成 DDI
+
+**ESP32-S3 / TinyUSB**
 - [Developing with Native tinyusb — ESP-IoT-Solution](https://docs.espressif.com/projects/esp-iot-solution/en/latest/usb/usb_overview/tinyusb_development_guide.html)
 - [USB Device Stack (ESP32-S3) — ESP-IDF Programming Guide](https://docs.espressif.com/projects/esp-idf/en/stable/esp32s3/api-reference/peripherals/usb_device.html)
 - [espressif/esp_tinyusb — ESP Component Registry](https://components.espressif.com/components/espressif/esp_tinyusb)

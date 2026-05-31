@@ -42,7 +42,7 @@ static const mh_report_info_t MH_REPORTS[MH_REPORT_COUNT] = {
   {  26,   0,   1,  10 },  // 0x82 REPORT_ID_VESA_VC
   {  27,   8,   1,   0 },  // 0x84 REPORT_ID_POWER
   {  28,  10,   0,   0 },  // 0x85 REPORT_ID_BATTERY
-  {  29,  33,   1,   0 },  // 0x8C REPORT_ID_BARCODE
+  {  29,  33,   1,   1 },  // 0x8C REPORT_ID_BARCODE
   {  30,   6,   1,   0 },  // 0x8D REPORT_ID_SCALE
   {  31, 229,   0,   0 },  // 0x8E REPORT_ID_MSR
   {  32,   1,   0,   0 },  // 0x90 REPORT_ID_CAMERA

@@ -3,7 +3,7 @@
 
 Reads spec/protocol_vectors.txt and checks build_frame / cobs_encode reproduce each
 expected output (and that parse/decode round-trips). The C firmware codec is checked
-against the SAME file by test_protocol_parity.c -- so both conform to one contract.
+against the SAME file by tests/test_parity.cpp (doctest) -- so both conform to one contract.
 
     PYTHONPATH=reference-client python tools/test_protocol_parity.py
 """

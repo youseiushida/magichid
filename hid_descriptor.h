@@ -885,7 +885,9 @@ uint8_t const desc_hid_report[] =
   // ===================================================================================
   //  Report 29 : Barcode Scanner Page (0x8C)       [HUT section 32]
   //  A handheld scanner: trigger-state Input + a 32-byte decoded-data Input buffer,
-  //  plus host-driven Output to initiate a read / set aiming mode.
+  //  a host-driven Output to initiate a read, and an Aiming/Pointer Mode capability
+  //  served as a Feature -- per HUT 32.3 it is a Static Flag (SF) scanner attribute,
+  //  which 32.2 places in the Attribute Report (a Feature report), not an Output.
   // ===================================================================================
   0x05, 0x8C,        // Usage Page (Barcode Scanner)                -- HUT 32, page 0x8C
   0x09, 0x02,        // Usage (Barcode Scanner)                     -- HUT 32, ID 0x02 (CA)
@@ -906,12 +908,16 @@ uint8_t const desc_hid_report[] =
     0x81, 0x02,                 //   Input (Data,Var,Abs)           -- decoded symbol payload
     0x25, 0x01,                 //   Logical Maximum (1)
     0x75, 0x01,                 //   Report Size (1 bit)
-    0x95, 0x02,                 //   Report Count (2 commands)
+    0x95, 0x01,                 //   Report Count (1)
     0x09, 0x60,                 //   Usage (Initiate Barcode Read)  -- HUT 32, ID 0x60 (DF)
-    0x09, 0x30,                 //   Usage (Aiming/Pointer Mode)    -- HUT 32, ID 0x30 (SF)
-    0x91, 0x02,                 //   Output (Data,Var,Abs)          -- host scan commands
-    0x95, 0x06,                 //   Report Count (6)
-    0x91, 0x03,                 //   Output (Const,Var,Abs)         -- 6-bit pad
+    0x91, 0x02,                 //   Output (Data,Var,Abs)          -- host triggers a scan
+    0x95, 0x07,                 //   Report Count (7)
+    0x91, 0x03,                 //   Output (Const,Var,Abs)         -- 7-bit pad (1-byte Output)
+    0x09, 0x30,                 //   Usage (Aiming/Pointer Mode)    -- HUT 32, ID 0x30 (SF, 32.3)
+    0x95, 0x01,                 //   Report Count (1)
+    0xB1, 0x02,                 //   Feature (Data,Var,Abs)         -- "supports aiming" attribute
+    0x95, 0x07,                 //   Report Count (7)
+    0xB1, 0x03,                 //   Feature (Const,Var,Abs)        -- 7-bit pad (1-byte Feature)
   0xC0,              // End Collection
 
   // ===================================================================================

@@ -133,5 +133,5 @@ HUT (e.g. keyboard = `[modifier][reserved][k1..k6]`, the TinyUSB mouse =
 
 Your codec is correct iff, for every line of `protocol_vectors.txt`:
 `build_frame(type, seq, payload)` equals the `FRAME` hex, and `cobs_encode(input)` equals
-the `COBS` hex (and the inverses round-trip). See `tools/test_protocol_parity.{c,py}` for
+the `COBS` hex (and the inverses round-trip). See `tests/run.ps1` (doctest: C codec + policy) and `tools/test_protocol_parity.py` for
 reference checkers.

@@ -4,29 +4,27 @@
 //
 //   操作PC ──UART(framed)──▶ ESP32-S3 ──USB HID(native)──▶ 被操作デバイス(PC/スマホ/Switch)
 //
-//  The ESP32 is a DUMB, SAFE relay. It does not interpret report payloads; it forwards
-//  operator commands to the target as HID reports and relays target->device traffic
-//  back. All logic lives in the operator-PC client. See DESIGN.md for the full design.
+//  This file is the CORE: pure mechanism, no report-layout knowledge. It owns USB
+//  enumeration, UART (COBS+CRC16) framing, command routing, identity/profile persistence,
+//  and the safety watchdog. All report/feature/relay POLICY lives in a DeviceBackend
+//  (device_backend.h); exactly one backend is active per boot, selected by the persisted
+//  profile id and listed in backends.cpp. The default "universal" backend is the original
+//  35-page chimera relay (backend_universal.cpp).
 //
-//  Responsibilities owned here (mechanism, not policy):
-//    - USB enumeration: present desc_hid_report[] (the 35-page "universal" profile).
-//    - UART transport: COBS + CRC16 framing (mh_protocol.h).
-//    - Faithful relay: validate then sendReport() verbatim (zero-padded to report size).
-//    - Bidirectional: serve GET_REPORT(Feature) from a client-supplied cache; relay
-//      host Output/Feature writes up as HOST_EVENT.
-//    - Safety: watchdog auto-release of held inputs if the operator goes silent; clean
-//      release on USB unmount. (Must be local because the operator can vanish.)
-//    - Identity/profiles: VID/PID + descriptor profile, applied across a clean reboot.
+//  Core <-> backend contract:
+//    - core calls the backend only through DeviceBackend callbacks,
+//    - the backend calls the core only through CoreServices (injected via begin()).
+//  This keeps target-specific code (e.g. a future Switch emulator) out of the core and
+//  individually removable.
 //
 //  Build notes (see README.md): Tools > USB Stack: "Adafruit TinyUSB"; UART0 = Serial0.
-//  A single HID report is capped at 63 data bytes (CONFIG_TINYUSB_HID_BUFSIZE=64); the
-//  generated table mh_reports.h carries each report's true size and this code enforces it.
+//  A single HID report is capped at 63 data bytes (CONFIG_TINYUSB_HID_BUFSIZE=64).
 // =====================================================================================
 
 #include "Adafruit_TinyUSB.h"
-#include "hid_descriptor.h"   // desc_hid_report[] + REPORT_ID_* enum
-#include "mh_reports.h"       // generated MH_REPORTS[] {id,in_len,out_len,feat_len}
-#include "mh_protocol.h"      // wire protocol + COBS + CRC16
+#include "mh_protocol.h"      // wire protocol + COBS + CRC16 (static inline)
+#include "device_backend.h"   // DeviceBackend / CoreServices seam
+#include "backends.h"         // BACKENDS[] registry + N_BACKENDS
 
 // ---- tunables ------------------------------------------------------------------------
 static const uint32_t MH_UART_BAUD   = 1000000;  // operator link (UART0)
@@ -36,13 +34,8 @@ static const uint8_t  HID_POLL_MS    = 2;        // HID IN endpoint poll interva
 // ---- USB HID device ------------------------------------------------------------------
 Adafruit_USBD_HID usb_hid;
 
-// ---- descriptor profiles (add target-specific descriptors here, select via SET_IDENTITY)
-struct Profile { const uint8_t *desc; uint16_t len; const char *name; };
-static const Profile PROFILES[] = {
-  { desc_hid_report, (uint16_t)sizeof(desc_hid_report), "universal" },
-  // e.g. { switch_horipad_desc, sizeof(switch_horipad_desc), "switch" },
-};
-static const uint8_t N_PROFILES = sizeof(PROFILES) / sizeof(PROFILES[0]);
+// ---- active backend (chosen in setup() from the persisted profile) -------------------
+static const DeviceBackend *g_active = nullptr;
 
 // ---- identity persisted across a software reboot (survives ESP.restart, not power loss)
 #define MH_ID_MAGIC 0x4D484944u  // "MHID"
@@ -50,42 +43,19 @@ RTC_NOINIT_ATTR uint32_t g_id_magic;
 RTC_NOINIT_ATTR uint16_t g_vid, g_pid, g_bcd;
 RTC_NOINIT_ATTR uint8_t  g_profile;
 
-// ---- held-input tracking (for watchdog auto-release) ---------------------------------
-static bool     g_held[256];          // g_held[report_id] = currently non-zero (pressed)
+// ---- core state ----------------------------------------------------------------------
 static uint32_t g_last_rx_ms = 0;
 static bool     g_watchdog_fired = false;
-static uint8_t  g_last_send_seq = 0;  // last successfully-sent seq; dedup retransmits (1..255)
-
-// ---- feature answer cache (client-supplied; served on host GET_REPORT(Feature)) ------
-struct FCache { uint8_t id; uint8_t len; uint8_t data[MH_HID_MAX_PAYLOAD]; };
-static const uint8_t FCACHE_N = 16;
-static FCache g_fcache[FCACHE_N];
-static portMUX_TYPE g_fc_mux = portMUX_INITIALIZER_UNLOCKED;
-
-// ---- host-event ring buffer (set_report_cb runs in the USB task; loop() drains it) ----
-struct HEvent { uint8_t id; uint8_t rtype; uint8_t len; uint8_t data[MH_HID_MAX_PAYLOAD]; };
-static const uint8_t HQ_N = 8;
-static volatile HEvent g_hq[HQ_N];
-static volatile uint8_t g_hq_head = 0, g_hq_tail = 0;
-static portMUX_TYPE g_hq_mux = portMUX_INITIALIZER_UNLOCKED;
+static bool     g_was_mounted = false;
 
 // ---- UART RX frame accumulator -------------------------------------------------------
-static uint8_t g_rx[MH_COBS_MAX];
+static uint8_t  g_rx[MH_COBS_MAX];
 static uint32_t g_rx_len = 0;
-static uint8_t g_decoded[MH_COBS_MAX];   // >= g_rx: COBS-decode output is <= input length
-
-// ---- mount state ---------------------------------------------------------------------
-static bool g_was_mounted = false;
+static uint8_t  g_decoded[MH_COBS_MAX];   // >= g_rx: COBS-decode output is <= input length
 
 // =====================================================================================
-//  helpers
+//  framing helpers (transport; offered to the backend via CoreServices)
 // =====================================================================================
-static const mh_report_info_t *find_info(uint8_t id) {
-  for (uint8_t i = 0; i < MH_REPORT_COUNT; i++)
-    if (MH_REPORTS[i].id == id) return &MH_REPORTS[i];
-  return nullptr;
-}
-
 static void mh_tx(uint8_t type, uint8_t seq, const uint8_t *payload, uint32_t plen) {
   uint8_t out[MH_COBS_MAX];
   uint32_t n = mh_build_frame(type, seq, payload, plen, out);
@@ -110,154 +80,51 @@ static void send_nack(uint8_t seq, uint8_t reason) {
 }
 static void send_log(const char *s) { mh_tx(MH_T_LOG, 0, (const uint8_t *)s, strlen(s)); }
 
-// Send one INPUT report, zero-padded to the report's declared size. Tracks held state.
-static bool send_report_padded(const mh_report_info_t *info,
-                               const uint8_t *data, uint8_t dlen) {
-  uint8_t buf[MH_HID_MAX_PAYLOAD];
-  memset(buf, 0, sizeof(buf));
-  if (dlen > info->in_len) dlen = info->in_len;
-  memcpy(buf, data, dlen);
-  bool ok = usb_hid.sendReport(info->id, buf, info->in_len);
-  if (ok) {
-    bool nz = false;
-    for (uint8_t i = 0; i < info->in_len; i++) if (buf[i]) { nz = true; break; }
-    g_held[info->id] = nz;
-  }
-  return ok;
+// =====================================================================================
+//  CoreServices: the backend-facing view of the core
+// =====================================================================================
+static bool core_hid_ready() { return usb_hid.ready(); }
+static bool core_hid_send(uint8_t id, const uint8_t *buf, uint16_t len) {
+  return usb_hid.sendReport(id, buf, len);
 }
-
-// Re-send a zeroed report for every held id (release keys/buttons).
-static void release_all_held() {
-  for (uint16_t id = 0; id < 256; id++) {
-    if (!g_held[id]) continue;
-    const mh_report_info_t *info = find_info((uint8_t)id);
-    if (info && info->in_len && usb_hid.ready()) {
-      uint8_t z[MH_HID_MAX_PAYLOAD]; memset(z, 0, sizeof(z));
-      usb_hid.sendReport((uint8_t)id, z, info->in_len);
-    }
-    g_held[id] = false;
-  }
+static void core_tx(uint8_t type, uint8_t seq, const uint8_t *payload, uint32_t plen) {
+  mh_tx(type, seq, payload, plen);
 }
+static const CoreServices CORE = {
+  core_hid_ready, core_hid_send, core_tx, send_ack, send_nack, send_log,
+};
 
 // =====================================================================================
-//  USB HID callbacks  (bidirectional)
+//  USB HID callbacks  (bidirectional) -- forwarded to the active backend
 // =====================================================================================
-// Host reads a FEATURE report -> answer from the client-supplied cache (instant).
 static uint16_t hid_get_report_cb(uint8_t report_id, hid_report_type_t type,
                                   uint8_t *buffer, uint16_t reqlen) {
   if (type != HID_REPORT_TYPE_FEATURE) return 0;   // INPUT GET handled by interrupt IN
-  uint16_t out = 0;
-  portENTER_CRITICAL(&g_fc_mux);
-  for (uint8_t i = 0; i < FCACHE_N; i++) {
-    if (g_fcache[i].id == report_id && g_fcache[i].len) {
-      out = g_fcache[i].len; if (out > reqlen) out = reqlen;
-      memcpy(buffer, g_fcache[i].data, out);
-      break;
-    }
-  }
-  portEXIT_CRITICAL(&g_fc_mux);
-  return out;   // 0 -> STALL (host treats as unsupported)
+  if (g_active && g_active->on_host_get) return g_active->on_host_get(report_id, buffer, reqlen);
+  return 0;   // 0 -> STALL (host treats as unsupported)
 }
 
-// Host writes an OUTPUT/FEATURE report (e.g. keyboard LEDs, LampArray) -> queue for relay.
 static void hid_set_report_cb(uint8_t report_id, hid_report_type_t type,
                               uint8_t const *buffer, uint16_t bufsize) {
-  // OUT-endpoint (interrupt) reports arrive as report_id=0 with the real id as the
-  // first byte (our descriptor uses Report IDs). SET_REPORT(control) instead passes the
-  // real report_id and a buffer with no id prefix.
+  // OUT-endpoint (interrupt) reports arrive as report_id=0 with the real id as the first
+  // byte (our descriptors use Report IDs). SET_REPORT(control) instead passes the real
+  // report_id and a buffer with no id prefix.
   if (report_id == 0 && bufsize >= 1) { report_id = buffer[0]; buffer++; bufsize--; }
   if (bufsize > MH_HID_MAX_PAYLOAD) bufsize = MH_HID_MAX_PAYLOAD;
-  portENTER_CRITICAL(&g_hq_mux);
-  uint8_t next = (g_hq_head + 1) % HQ_N;
-  if (next != g_hq_tail) {                 // drop if full
-    g_hq[g_hq_head].id = report_id;
-    g_hq[g_hq_head].rtype = (uint8_t)type;
-    g_hq[g_hq_head].len = (uint8_t)bufsize;
-    for (uint16_t i = 0; i < bufsize; i++) g_hq[g_hq_head].data[i] = buffer[i];
-    g_hq_head = next;
-  }
-  portEXIT_CRITICAL(&g_hq_mux);
-}
-
-// Drain the host-event queue and relay each as a HOST_EVENT frame (from loop() context).
-static void flush_host_events() {
-  while (true) {
-    HEvent ev; bool have = false;
-    portENTER_CRITICAL(&g_hq_mux);
-    if (g_hq_tail != g_hq_head) {
-      ev.id = g_hq[g_hq_tail].id; ev.rtype = g_hq[g_hq_tail].rtype; ev.len = g_hq[g_hq_tail].len;
-      for (uint8_t i = 0; i < ev.len; i++) ev.data[i] = g_hq[g_hq_tail].data[i];
-      g_hq_tail = (g_hq_tail + 1) % HQ_N;
-      have = true;
-    }
-    portEXIT_CRITICAL(&g_hq_mux);
-    if (!have) break;
-    uint8_t p[2 + MH_HID_MAX_PAYLOAD];
-    p[0] = ev.id; p[1] = ev.rtype;
-    memcpy(p + 2, ev.data, ev.len);
-    mh_tx(MH_T_HOST_EVENT, 0, p, 2 + ev.len);
-  }
+  if (g_active && g_active->on_host_out)
+    g_active->on_host_out(report_id, (uint8_t)type, buffer, bufsize);
 }
 
 // =====================================================================================
-//  command handlers
+//  command routing
 // =====================================================================================
-static void handle_send_report(uint8_t seq, const uint8_t *p, uint32_t plen) {
-  if (plen < 1) { send_nack(seq, MH_NACK_BAD_LEN); return; }
-  // Idempotent retransmit: if this seq was already applied, just re-ACK. Prevents a lost
-  // ACK from double-applying RELATIVE reports (e.g. mouse move counted twice).
-  if (seq != 0 && seq == g_last_send_seq) { send_ack(seq); return; }
-  uint8_t id = p[0];
-  const uint8_t *data = p + 1;
-  uint32_t dlen = plen - 1;
-  const mh_report_info_t *info = find_info(id);
-  if (!info)                 { send_nack(seq, MH_NACK_UNKNOWN_ID);   return; }
-  if (info->in_len == 0)     { send_nack(seq, MH_NACK_NOT_SENDABLE); return; }
-  if (info->in_len > MH_HID_MAX_PAYLOAD) { send_nack(seq, MH_NACK_TOO_BIG); return; }
-  if (dlen > info->in_len)   { send_nack(seq, MH_NACK_BAD_LEN);      return; }
-  if (!usb_hid.ready())      { send_nack(seq, MH_NACK_NOT_READY);    return; }
-  if (send_report_padded(info, data, (uint8_t)dlen)) { g_last_send_seq = seq; send_ack(seq); }
-  else send_nack(seq, MH_NACK_NOT_READY);
-}
-
-static void handle_set_feature(uint8_t seq, const uint8_t *p, uint32_t plen) {
-  if (plen < 1) { send_nack(seq, MH_NACK_BAD_LEN); return; }
-  uint8_t id = p[0];
-  uint32_t dlen = plen - 1;
-  if (dlen > MH_HID_MAX_PAYLOAD) { send_nack(seq, MH_NACK_TOO_BIG); return; }
-  portENTER_CRITICAL(&g_fc_mux);
-  int slot = -1, freeslot = -1;
-  for (uint8_t i = 0; i < FCACHE_N; i++) {
-    if (g_fcache[i].id == id) { slot = i; break; }
-    if (freeslot < 0 && g_fcache[i].len == 0 && g_fcache[i].id == 0) freeslot = i;
-  }
-  if (slot < 0) slot = (freeslot >= 0) ? freeslot : 0;
-  g_fcache[slot].id = id;
-  g_fcache[slot].len = (uint8_t)dlen;
-  memcpy(g_fcache[slot].data, p + 1, dlen);
-  portEXIT_CRITICAL(&g_fc_mux);
-  send_ack(seq);
-}
-
-static void handle_get_caps(uint8_t seq) {
-  uint8_t p[4 * MH_REPORT_COUNT];
-  uint32_t n = 0;
-  for (uint8_t i = 0; i < MH_REPORT_COUNT; i++) {
-    p[n++] = MH_REPORTS[i].id;
-    p[n++] = MH_REPORTS[i].in_len;
-    p[n++] = MH_REPORTS[i].out_len;
-    p[n++] = MH_REPORTS[i].feat_len;
-  }
-  mh_tx(MH_T_CAPS, seq, p, n);
-}
-
 static void handle_set_identity(uint8_t seq, const uint8_t *p, uint32_t plen) {
   if (plen < 7) { send_nack(seq, MH_NACK_BAD_LEN); return; }
   uint16_t vid = p[0] | (p[1] << 8);
   uint16_t pid = p[2] | (p[3] << 8);
   uint16_t bcd = p[4] | (p[5] << 8);
   uint8_t  prof = p[6];
-  if (prof >= N_PROFILES) { send_nack(seq, MH_NACK_BAD_LEN); return; }
+  if (prof >= N_BACKENDS) { send_nack(seq, MH_NACK_BAD_LEN); return; }
   // Persist and reboot for a clean re-enumeration with the new identity/descriptor.
   g_vid = vid; g_pid = pid; g_bcd = bcd; g_profile = prof; g_id_magic = MH_ID_MAGIC;
   send_ack(seq);
@@ -273,12 +140,24 @@ static void process_frame(const uint8_t *src, uint32_t len) {
   if (plen < 0) { send_nack(0, MH_NACK_BAD_CRC); return; }
   g_last_rx_ms = millis();
   switch (type) {
-    case MH_T_SEND_REPORT:  handle_send_report(seq, payload, plen); break;
+    case MH_T_SEND_REPORT:
+      if (g_active->on_operator) g_active->on_operator(seq, payload, plen);
+      else send_nack(seq, MH_NACK_BAD_FRAME);
+      break;
     case MH_T_PING:         send_status(); break;
-    case MH_T_RELEASE_ALL:  release_all_held(); send_ack(seq); break;
-    case MH_T_GET_CAPS:     handle_get_caps(seq); break;
+    case MH_T_RELEASE_ALL:
+      if (g_active->release_all) g_active->release_all();
+      send_ack(seq);
+      break;
+    case MH_T_GET_CAPS:
+      if (g_active->get_caps) g_active->get_caps(seq);
+      else send_nack(seq, MH_NACK_BAD_FRAME);
+      break;
     case MH_T_SET_IDENTITY: handle_set_identity(seq, payload, plen); break;
-    case MH_T_SET_FEATURE:  handle_set_feature(seq, payload, plen); break;
+    case MH_T_SET_FEATURE:
+      if (g_active->on_set_feature) g_active->on_set_feature(seq, payload, plen);
+      else send_nack(seq, MH_NACK_BAD_FRAME);
+      break;
     default:                send_nack(seq, MH_NACK_BAD_FRAME); break;
   }
 }
@@ -297,10 +176,9 @@ static void rx_byte(uint8_t b) {
 //  periodic checks
 // =====================================================================================
 static void check_watchdog() {
-  bool any = false;
-  for (uint16_t id = 0; id < 256; id++) if (g_held[id]) { any = true; break; }
+  bool any = g_active->any_held ? g_active->any_held() : false;
   if (any && (millis() - g_last_rx_ms) > WATCHDOG_MS) {
-    release_all_held();
+    if (g_active->release_all) g_active->release_all();
     g_watchdog_fired = true;
     send_status();
   }
@@ -310,7 +188,7 @@ static void check_mount() {
   bool m = TinyUSBDevice.mounted();
   if (m != g_was_mounted) {
     g_was_mounted = m;
-    if (!m) { release_all_held(); }   // target gone -> drop state
+    if (!m && g_active->release_all) g_active->release_all();   // target gone -> drop state
     g_watchdog_fired = false;
     send_status();                    // handshake: tell operator about the change
   }
@@ -323,18 +201,24 @@ void setup() {
   // Required before adding interfaces (no-op if the core already started the device).
   if (!TinyUSBDevice.isInitialized()) TinyUSBDevice.begin(0);
 
-  // --- apply persisted identity / profile (set by a prior SET_IDENTITY) ---
+  // --- select the active backend from the persisted profile (set by SET_IDENTITY) ---
   uint8_t prof = 0;
-  if (g_id_magic == MH_ID_MAGIC) {
-    if (g_profile < N_PROFILES) prof = g_profile;
-    if (g_vid) TinyUSBDevice.setID(g_vid, g_pid);
-    if (g_bcd) TinyUSBDevice.setVersion(g_bcd);
-  }
+  if (g_id_magic == MH_ID_MAGIC && g_profile < N_BACKENDS) prof = g_profile;
+  g_active = BACKENDS[prof];
+  g_active->begin(&CORE);
+
+  // --- identity: an explicit SET_IDENTITY override wins; else the backend's declared id ---
+  bool have_override = (g_id_magic == MH_ID_MAGIC);
+  uint16_t vid = (have_override && g_vid) ? g_vid : g_active->vid;
+  uint16_t pid = (have_override && g_vid) ? g_pid : g_active->pid;
+  uint16_t bcd = (have_override && g_bcd) ? g_bcd : g_active->bcd;
+  if (vid) TinyUSBDevice.setID(vid, pid);
+  if (bcd) TinyUSBDevice.setVersion(bcd);
 
   // --- USB HID (to the target) ---
   usb_hid.setPollInterval(HID_POLL_MS);
   usb_hid.enableOutEndpoint(true);                       // receive host Output reports
-  usb_hid.setReportDescriptor(PROFILES[prof].desc, PROFILES[prof].len);
+  usb_hid.setReportDescriptor(g_active->desc, g_active->desc_len);
   usb_hid.setReportCallback(hid_get_report_cb, hid_set_report_cb);
   usb_hid.setStringDescriptor("MagicHID Bridge");
   usb_hid.begin();
@@ -351,7 +235,6 @@ void setup() {
   Serial0.setRxBufferSize(2048);
   Serial0.begin(MH_UART_BAUD);
 
-  memset(g_held, 0, sizeof(g_held));
   g_last_rx_ms = millis();
 }
 
@@ -361,8 +244,8 @@ void loop() {
 #endif
   // 1. pull operator bytes
   while (Serial0.available()) rx_byte((uint8_t)Serial0.read());
-  // 2. relay any host->device traffic
-  flush_host_events();
+  // 2. backend periodic work (e.g. universal relays queued host events here)
+  if (g_active->task) g_active->task();
   // 3. safety: auto-release held inputs if operator went silent
   check_watchdog();
   // 4. handshake: report mount/unmount changes
