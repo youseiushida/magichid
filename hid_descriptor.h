@@ -51,6 +51,23 @@
 //      Logical Max 65535 -> 0x27,0xFF,0xFF,0x00,0x00 (4-byte form)
 //      Logical Max 2^31-1-> 0x27,0xFF,0xFF,0xFF,0x7F
 // =====================================================================================
+//
+//  /!\ RUNTIME / BUILD NOTES for ESP32-S3 + Adafruit TinyUSB  (full details: README.md)
+//  ------------------------------------------------------------------------------------
+//  * HID single-report ceiling = CONFIG_TINYUSB_HID_BUFSIZE (default 64 on
+//    arduino-esp32 3.3.x). The buffer holds 1 Report-ID byte + payload, so usable data
+//    is 63 bytes. THREE reports here exceed that and will NOT transmit unmodified:
+//        Report 24 Monitor (EDID Feature 130 B), Report 31 MSR (Input 229 B),
+//        Report 35 FIDO (64 B data + 1 ID = 65 B).  The other 32 reports work as-is.
+//    (Not changeable via a -D flag in Arduino IDE -- the buffer lives in the precompiled
+//     core lib; enlarge via ESP-IDF menuconfig or a rebuilt core. See README.md.)
+//  * Reports 27 Power / 28 Battery make a host OS bind its power/UPS stack. Send safe
+//    values (100% / AC present) or don't transmit them during bring-up, or the OS may
+//    show a battery icon / act on a low-battery reading.
+//  * Report 35 FIDO only functions as a real authenticator on its OWN HID interface
+//    with NO Report ID (CTAPHID needs exact 64-byte frames). It enumerates here but
+//    will not work as FIDO on this shared multi-report interface.
+// =====================================================================================
 
 #ifndef HID_DESCRIPTOR_H_
 #define HID_DESCRIPTOR_H_
@@ -724,6 +741,8 @@ uint8_t const desc_hid_report[] =
   //  Report 24 : Monitor Page (0x80)               [HUT section 27]
   //  A monitor reporting its identity: 128-byte EDID block + VESA DDC/CI version,
   //  delivered via Feature reports.
+  //  *** OVERSIZE: this EDID Feature is 130 B, over the 63 B usable payload of the
+  //  default 64 B HID buffer -- truncated/rejected until the buffer is enlarged. ***
   // ===================================================================================
   0x05, 0x80,        // Usage Page (Monitor)                        -- HUT 27, page 0x80
   0x09, 0x01,        // Usage (Monitor Control)                     -- HUT 27, ID 0x01 (CA)
@@ -796,6 +815,11 @@ uint8_t const desc_hid_report[] =
   // ===================================================================================
   //  Report 27 : Power Page (0x84)                 [HUT section 30]
   //  A UPS: live electrical measures (Input) + on/off switch controls (Output).
+  //  *** OS POWER-BINDING WARNING ***  A host (esp. Windows) may bind this as a system
+  //  UPS. If the firmware streams a critical / on-battery / 0% state (or sends garbage
+  //  at startup), the OS can pop a battery icon and even move toward sleep/shutdown.
+  //  Send safe values (100% / AC present) ASAP, or don't transmit this report ID while
+  //  testing.  (See README.md.)
   // ===================================================================================
   0x05, 0x84,        // Usage Page (Power)                          -- HUT 30, page 0x84
   0x09, 0x04,        // Usage (UPS)                                 -- HUT 30, ID 0x04 (CA)
@@ -825,6 +849,8 @@ uint8_t const desc_hid_report[] =
   //  Smart-battery gauge.  The page has no Application usage of its own, so the
   //  collection is opened with the Power page's "Battery System" usage (0x84/0x10) and
   //  the data fields then switch to the Battery System page (0x85).
+  //  *** Same OS power-binding caveat as Report 27 (Power): report a healthy charge
+  //  state, or stay silent during bring-up, so the host does not act on a low reading.
   // ===================================================================================
   0x05, 0x84,        // Usage Page (Power)                          -- parent app collection
   0x09, 0x10,        // Usage (Battery System)                      -- HUT 30, ID 0x10 (CP)
@@ -931,6 +957,9 @@ uint8_t const desc_hid_report[] =
   //  Report 31 : Magnetic Stripe Reader Page (0x8E)   [HUT section 34]
   //  A 3-track MSR: per-track byte-length fields followed by the decoded track data.
   //  Track sizes follow ISO/IEC 7811 maxima (79 / 40 / 107 characters).
+  //  *** OVERSIZE: this Input report is 229 B, far over the 63 B usable payload of the
+  //  default 64 B HID buffer -- won't transmit until the buffer is enlarged, or shrink/
+  //  split the track-data fields.  (See README.md.) ***
   // ===================================================================================
   0x05, 0x8E,        // Usage Page (Magnetic Stripe Reader)         -- HUT 34, page 0x8E
   0x09, 0x01,        // Usage (MSR Device Read-Only)                -- HUT 34, ID 0x01 (CA)
@@ -1038,6 +1067,10 @@ uint8_t const desc_hid_report[] =
   //  uses the 2-byte (0x06) form.  64-byte Input + 64-byte Output carry raw CTAPHID
   //  frames.  (Real U2FHID interfaces omit a Report ID; here a Report ID is required
   //  because this is one shared interface, so REPORT_ID_FIDO is included.)
+  //  *** Two consequences of the shared Report ID: (1) 64 B data + 1 ID = 65 B exceeds
+  //  the 63 B usable payload of the default 64 B HID buffer, so it won't send as-is;
+  //  (2) CTAPHID forbids a Report ID and needs exact 64 B frames, so it won't work as a
+  //  real authenticator here. For real FIDO use a dedicated HID interface. (README.md) ***
   // ===================================================================================
   0x06, 0xD0, 0xF1,  // Usage Page (FIDO Alliance, 0xF1D0)          -- HUT 38, page 0xF1D0
   0x09, 0x01,        // Usage (U2F Authenticator Device)            -- HUT 38, ID 0x01 (CA)
