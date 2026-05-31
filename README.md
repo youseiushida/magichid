@@ -48,10 +48,25 @@ python tools/gen_reports.py     # hid_descriptor.h  -> mh_reports.h, spec/report
 python tools/gen_protocol.py    # spec/protocol.yaml -> mh_protocol_defs.h, _defs.py, vectors
 ```
 
-### 2. ファームウェア（ESP32-S3 / Arduino IDE）
-- Tools → USB Stack: **Adafruit TinyUSB**（`Serial0` = UART0 を操作リンクに使用）。
-- `magichid.ino` を書き込み。**操作PC は UART0**（基板の COM/UART ポート, 1 Mbps）へ、
-  **被操作デバイスはネイティブ USB** ポートへ接続。接続順は不問（ハンドシェイクが吸収）。
+### 2. ファームウェア（ESP32-S3）— ★実機ビルド＆列挙 検証済み
+
+**Arduino IDE の Tools 設定：**
+- **USB Mode: `USB-OTG (TinyUSB)`**
+- **USB CDC On Boot: `Enabled`** ← ⚠**必須**。`Disabled` だと ESP32-S3 では USB-OTG が起動せず、
+  native USB が ROM の USB-Serial-JTAG のままで **HID が列挙されません**（Adafruit の `begin()` は ESP32 で
+  USBハードを初期化せず、起動はコア任せ＝CDC On Boot 有効時のみ作動）。有効化すると native USB は CDC＋HID 複合になります。
+- Flash Size / PSRAM はボードに合わせる（例: 8MB / OPI PSRAM）。
+- 接続：**操作PC → UART0**（基板の UART/COM ポート, 1 Mbps）、**被操作デバイス → ネイティブ USB** ポート。接続順は不問。
+
+**arduino-cli での検証済みコマンド（ESP32-S3, 8MB / OPI PSRAM の例）：**
+```
+arduino-cli compile --upload \
+  --fqbn esp32:esp32:esp32s3:USBMode=default,CDCOnBoot=cdc,FlashSize=8M,PSRAM=opi,UploadMode=cdc \
+  --libraries "<Adafruit lib を含む libraries フォルダ>" -p COMxx .
+```
+- `CDCOnBoot=cdc` ＝ USB CDC On Boot 有効（上記の必須設定）。
+- ネイティブUSB経由で焼くときは `UploadMode=cdc`（1200bpsタッチで自動リセット）。UARTブリッジ経由なら不要。
+- 実機（ESP32-S3 / arduino-esp32 3.3.8）で **全35ページが Windows に HID として列挙**・PING/STATUS/GET_CAPS 往復まで確認済み。
 
 ### 3. クライアント
 - **自作する場合**：`spec/PROTOCOL.md` ＋ `spec/protocol_vectors.txt` だけで任意言語で実装可。
