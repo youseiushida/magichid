@@ -216,3 +216,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# USB-IF "HID Usage Tables for USB" spec -- copyrighted, not redistributed in this repo.
+# Download from https://usb.org/hid to regenerate / verify hid_descriptor.h.
+docs/hut1_7.ocr.md
+docs/hut1_7.pdf

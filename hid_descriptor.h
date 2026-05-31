@@ -7,10 +7,10 @@
 //            for every Usage Page that the official "HID Usage Tables for USB" (HUT)
 //            version 1.7 defines (35 pages in total).
 //
-//  Reference: docs/hut1_7.ocr.md  (USB-IF "HID Usage Tables" 1.7).  Every Usage Page
-//             value, every Usage ID, and every Usage Type referenced below was taken
-//             directly from that document.  Section numbers in the comments (e.g.
-//             "HUT 23.12") point at the relevant table in that specification.
+//  Reference: USB-IF "HID Usage Tables for USB" version 1.7 (download from usb.org).
+//             Every Usage Page value, Usage ID, and Usage Type below was taken directly
+//             from that specification; section numbers in comments (e.g. "HUT 23.12")
+//             point at the relevant table. (The spec is copyrighted and not bundled here.)
 //
 //  Design rules followed (per project goal):
 //    1. Where the Adafruit TinyUSB library already ships a battle-tested helper macro
