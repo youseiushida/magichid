@@ -2,7 +2,7 @@
 //  magichid.ino  --  MagicHID transparent HID bridge (ESP32-S3 + Adafruit TinyUSB)
 // =====================================================================================
 //
-//   操作PC ──UART(framed)──▶ ESP32-S3 ──USB HID(native)──▶ 被操作デバイス(PC/スマホ/Switch)
+//   operator PC ──UART(framed)──▶ ESP32-S3 ──USB HID(native)──▶ target device (PC / phone / Switch)
 //
 //  This file is the CORE: pure mechanism, no report-layout knowledge. It owns USB
 //  enumeration, UART (COBS+CRC16) framing, command routing, identity/profile persistence,

@@ -10,7 +10,7 @@
 //
 //  Constants come from mh_protocol_defs.h (generated from spec/protocol.yaml). The COBS/
 //  CRC algorithm below is hand-written; spec/protocol_vectors.txt is the golden oracle
-//  that any client (the Python reference, or your own) must match byte-for-byte.
+//  that any client must match byte-for-byte.
 //  Pure header (static inline) so the .ino and any .cpp can include it.
 // =====================================================================================
 #ifndef MH_PROTOCOL_H_

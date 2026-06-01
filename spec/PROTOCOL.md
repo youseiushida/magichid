@@ -35,7 +35,7 @@ BODY =  TYPE(1)  SEQ(1)  PAYLOAD(0..N)  CRC16(2, little-endian)
 - `SEQ` is 1..255 for commands (operator→device); device→operator notifications use `SEQ=0`.
 
 To implement the codec, copy CRC-16/CCITT and standard COBS, then verify against
-`protocol_vectors.txt`. (Reference: `mh_protocol.h` in C, `protocol.py` in Python.)
+`protocol_vectors.txt`. (Reference C implementation: `magichid/mh_protocol.h`.)
 
 ## 3. Messages
 

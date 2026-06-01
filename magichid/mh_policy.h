@@ -4,7 +4,7 @@
 //  These functions encode the SEND_REPORT contract documented in spec/PROTOCOL.md
 //  (§3.4 NACK reasons, §4 Semantics). They take plain inputs and return plain results --
 //  no usb_hid, no UART, no FreeRTOS, no globals -- so they compile and unit-test on the
-//  host with plain gcc/clang (see tools/test_policy.c). The oracle is the SPEC, not the
+//  host with plain gcc/clang (see tests/test_policy.cpp). The oracle is the SPEC, not the
 //  current code: if a regenerated table or a code change diverges from PROTOCOL.md, the
 //  host test fails before anything is flashed.
 //

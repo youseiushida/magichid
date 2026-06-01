@@ -1,0 +1,4 @@
+# Normalize line endings so the CI "no-drift" check is stable regardless of each
+# contributor's core.autocrlf. All text (incl. the generated headers / JSON / vectors)
+# is stored and checked out as LF. Git auto-detects and leaves binary files alone.
+* text=auto eol=lf

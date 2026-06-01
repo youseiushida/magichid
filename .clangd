@@ -1,0 +1,6 @@
+# Editor (clangd) config: resolve the host tests' includes, since the firmware headers
+# now live in magichid/. Firmware files that include Adafruit_TinyUSB.h still won't fully
+# resolve without the Arduino toolchain paths -- that's expected; the real build is
+# arduino-cli (see .github/workflows/ci.yml) / the Arduino IDE.
+CompileFlags:
+  Add: [-Imagichid, -Itests, -std=c++17]

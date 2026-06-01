@@ -1,6 +1,6 @@
 // Host conformance test for the firmware codec (mh_protocol.h) against the golden vectors
-// in spec/protocol_vectors.txt -- the SAME oracle the Python reference checks, so both
-// implementations conform to one contract. Run from the repo root (relative vectors path).
+// in spec/protocol_vectors.txt -- the language-neutral contract every client must also
+// match, so all implementations agree. Run from the repo root (relative vectors path).
 #include "doctest.h"
 #include "mh_protocol.h"
 #include <cstdio>

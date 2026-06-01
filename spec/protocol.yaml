@@ -2,11 +2,10 @@
 #  MagicHID UART wire protocol -- SINGLE SOURCE OF TRUTH
 # =====================================================================================
 #  Humans edit this file. `tools/gen_protocol.py` derives, so nothing drifts:
-#    - mh_protocol_defs.h                     (C constants, for the firmware)
-#    - reference-client/.../_defs.py          (Python constants, if that client exists)
+#    - magichid/mh_protocol_defs.h            (C constants, for the firmware)
 #    - spec/protocol_vectors.txt              (golden conformance vectors)
 #  The human-readable spec is spec/PROTOCOL.md. Any client in any language can be built
-#  from PROTOCOL.md + this file + the vectors -- the reference client is optional.
+#  from PROTOCOL.md + this file + the vectors (a client lives in its own repo).
 # =====================================================================================
 
 meta:

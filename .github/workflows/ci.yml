@@ -1,0 +1,55 @@
+name: ci
+on: [push, pull_request]
+
+# Enforces the project's single-source-of-truth contract WITHOUT auto-committing:
+#   1. the committed generated files must equal a fresh run of the generators (no drift
+#      from spec/protocol.yaml and hid_descriptor.h),
+#   2. the pure firmware logic must conform to the spec oracles (codec / policy / horipad),
+#   3. the firmware sketch actually compiles for the ESP32-S3 (arduino-cli).
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+
+      # 1) regenerate, then fail if anything changed -> "you edited a single source but
+      #    forgot to re-run the generator and commit the result".
+      - name: regenerate from single sources
+        run: |
+          uv run tools/gen_protocol.py
+          uv run tools/gen_reports.py
+      - name: check generated files are up to date
+        run: |
+          git diff --exit-code -- \
+            magichid/mh_protocol_defs.h magichid/mh_reports.h \
+            spec/protocol_vectors.txt spec/reports.json \
+          || { echo "::error::generated files are stale -- run the generators and commit"; exit 1; }
+
+      # 2) host tests: mh_protocol.h codec vs golden vectors, mh_policy.h vs PROTOCOL.md,
+      #    horipad_proto.h vs spec/horipad.md (doctest, no ESP32).
+      - name: host tests (g++ + doctest)
+        run: |
+          g++ -std=c++17 -O1 -I magichid \
+            tests/test_main.cpp tests/test_policy.cpp tests/test_parity.cpp tests/test_horipad.cpp \
+            -o mh_tests
+          ./mh_tests
+
+  # 3) the firmware sketch must actually compile for the ESP32-S3 (the host tests above
+  #    only cover pure logic; this catches breakage in the .ino / backends / descriptor).
+  firmware:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: arduino/setup-arduino-cli@v2
+      - name: install ESP32 core (pinned) + Adafruit TinyUSB
+        run: |
+          ESP32_URL=https://espressif.github.io/arduino-esp32/package_esp32_index.json
+          arduino-cli core update-index --additional-urls "$ESP32_URL"
+          arduino-cli core install esp32:esp32@3.3.8 --additional-urls "$ESP32_URL"
+          arduino-cli lib install "Adafruit TinyUSB Library"
+      - name: compile magichid sketch
+        run: |
+          arduino-cli compile \
+            --fqbn esp32:esp32:esp32s3:USBMode=default,CDCOnBoot=cdc \
+            magichid

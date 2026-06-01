@@ -1,18 +1,22 @@
 #!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.9"
+# dependencies = []
+# ///
 # =====================================================================================
 #  gen_reports.py  --  Single source of truth generator for MagicHID
 # =====================================================================================
-#  Parses ../hid_descriptor.h (the USB-facing report descriptor) and emits, so the
-#  firmware and the operator-PC client never disagree on report layout:
+#  Parses ../magichid/hid_descriptor.h (the USB-facing report descriptor) and emits, so the
+#  firmware and any client never disagree on report layout:
 #
-#    ../mh_reports.h        C table {id, in_len, out_len, feat_len} for the firmware
-#    ../client/reports.json same table as JSON for the Python client
+#    ../magichid/mh_reports.h   C table {id, in_len, out_len, feat_len} for the firmware
+#    ../spec/reports.json       same table as JSON (client / GET_CAPS reference)
 #
 #  The 3 reports built from TinyUSB macros (Mouse/Keyboard/Consumer) are not expanded
 #  here, so their sizes are injected from MACRO_SIZES (computed from the real
 #  TUD_HID_REPORT_DESC_* templates in Adafruit TinyUSB's hid_device.h).
 #
-#  Run:  python tools/gen_reports.py
+#  Run:  uv run tools/gen_reports.py
 # =====================================================================================
 import json
 import os
@@ -21,8 +25,9 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-HID_H = os.path.join(ROOT, "hid_descriptor.h")
-OUT_H = os.path.join(ROOT, "mh_reports.h")
+FW = os.path.join(ROOT, "magichid")              # Arduino sketch folder (firmware sources)
+HID_H = os.path.join(FW, "hid_descriptor.h")
+OUT_H = os.path.join(FW, "mh_reports.h")
 OUT_JSON = os.path.join(ROOT, "spec", "reports.json")
 
 # Report ID -> HUT Usage Page (informational; for client convenience / debugging).
@@ -150,7 +155,7 @@ def main():
 
     # ---- emit reports.json ----
     os.makedirs(os.path.dirname(OUT_JSON), exist_ok=True)
-    with open(OUT_JSON, "w", encoding="utf-8") as f:
+    with open(OUT_JSON, "w", encoding="utf-8", newline="\n") as f:
         json.dump({"reports": reports}, f, indent=2)
         f.write("\n")
 
@@ -179,7 +184,7 @@ def main():
             f"{r['feature_bytes']:3d} }},  // 0x{r['page']:02X} {r['name']}"
         )
     lines += ["};", "", "#endif // MH_REPORTS_H_", ""]
-    with open(OUT_H, "w", encoding="utf-8") as f:
+    with open(OUT_H, "w", encoding="utf-8", newline="\n") as f:
         f.write("\n".join(lines))
 
     # ---- console summary ----

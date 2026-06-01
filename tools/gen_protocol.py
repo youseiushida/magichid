@@ -1,19 +1,20 @@
 #!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.9"
+# dependencies = ["pyyaml>=6,<7"]
+# ///
 # =====================================================================================
 #  gen_protocol.py  --  derive protocol constants + golden vectors from spec/protocol.yaml
 # =====================================================================================
 #  Single source: spec/protocol.yaml. This generates:
-#    - mh_protocol_defs.h                            C constants (firmware)
+#    - magichid/mh_protocol_defs.h                   C constants (firmware sketch)
 #    - spec/protocol_vectors.txt                     golden conformance vectors
-#    - reference-client/magichid_bridge/_defs.py     Python constants -- ONLY if such a
-#                                                    client dir exists alongside; skipped
-#                                                    otherwise (the contract is self-sufficient)
 #
 #  The framing ALGORITHM (CRC16/COBS) is hand-written in mh_protocol.h (C); a self-contained
 #  copy lives here only to MINT the golden vectors. tests/test_parity.cpp verifies the C codec
-#  against them; any external client checks itself against the same spec/protocol_vectors.txt.
+#  against them; any external client (its own repo) checks itself against the same vectors.
 #
-#  Run:  python tools/gen_protocol.py
+#  Run:  uv run tools/gen_protocol.py
 # =====================================================================================
 import os
 import sys
@@ -22,9 +23,9 @@ import yaml
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
+FW = os.path.join(ROOT, "magichid")              # Arduino sketch folder (firmware sources)
 SRC = os.path.join(ROOT, "spec", "protocol.yaml")
-OUT_DEFS_H = os.path.join(ROOT, "mh_protocol_defs.h")
-OUT_DEFS_PY = os.path.join(ROOT, "reference-client", "magichid_bridge", "_defs.py")
+OUT_DEFS_H = os.path.join(FW, "mh_protocol_defs.h")
 OUT_VECTORS = os.path.join(ROOT, "spec", "protocol_vectors.txt")
 
 
@@ -95,33 +96,8 @@ def emit_defs_h(spec):
     for k, v in spec["nack_reasons"].items():
         L.append(f"#define MH_NACK_{k:<13} {v}")
     L += ["", "#endif // MH_PROTOCOL_DEFS_H_", ""]
-    open(OUT_DEFS_H, "w", encoding="utf-8").write("\n".join(L))
+    open(OUT_DEFS_H, "w", encoding="utf-8", newline="\n").write("\n".join(L))
     return OUT_DEFS_H
-
-
-def emit_defs_py(spec):
-    if not os.path.isdir(os.path.dirname(OUT_DEFS_PY)):
-        return None                                # reference client deleted -> skip
-    L = ['"""AUTO-GENERATED from spec/protocol.yaml by tools/gen_protocol.py. Do not edit."""',
-         f"PROTO_VERSION = {spec['meta']['proto_version']}",
-         f"DELIM = 0x{spec['framing']['delimiter']:02X}",
-         f"MAX_PAYLOAD = {spec['limits']['max_payload']}",
-         f"HID_MAX_PAYLOAD = {spec['limits']['hid_max_payload']}", "",
-         "# message types"]
-    for m in spec["messages"]:
-        L.append(f"T_{m['name']} = 0x{m['code']:02X}")
-    L += ["", "# STATUS flag bits"]
-    for k, v in spec["status_flags"].items():
-        L.append(f"ST_{k} = 0x{v:02X}")
-    L += ["", "# NACK reasons (code -> name)", "NACK_REASONS = {"]
-    for k, v in spec["nack_reasons"].items():
-        L.append(f"    {v}: {k!r},")
-    L += ["}", "", "# HID report types"]
-    for k, v in spec["hid_report_types"].items():
-        L.append(f"HID_{k} = {v}")
-    L.append("")
-    open(OUT_DEFS_PY, "w", encoding="utf-8").write("\n".join(L))
-    return OUT_DEFS_PY
 
 
 def emit_vectors():
@@ -134,20 +110,14 @@ def emit_vectors():
     for v in COBS_VECS:
         L.append(f"COBS {bytes(v).hex()} {cobs_encode(bytes(v)).hex()}")
     L.append("")
-    open(OUT_VECTORS, "w", encoding="utf-8").write("\n".join(L))
+    open(OUT_VECTORS, "w", encoding="utf-8", newline="\n").write("\n".join(L))
     return OUT_VECTORS
 
 
 def main():
     spec = load()
-    wrote = [emit_defs_h(spec), emit_vectors()]
-    py = emit_defs_py(spec)
-    if py:
-        wrote.append(py)
-    for w in wrote:
+    for w in (emit_defs_h(spec), emit_vectors()):
         print("Wrote", w)
-    if py is None:
-        print("(reference-client absent -> skipped _defs.py; contract is self-sufficient)")
 
 
 if __name__ == "__main__":
