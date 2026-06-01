@@ -17,7 +17,7 @@
 //  This keeps target-specific code (e.g. a future Switch emulator) out of the core and
 //  individually removable.
 //
-//  Build notes (see README.md): Tools > USB Stack: "Adafruit TinyUSB"; UART0 = Serial0.
+//  Build notes: Arduino IDE Tools > USB Stack: "Adafruit TinyUSB"; UART0 = Serial0.
 //  A single HID report is capped at 63 data bytes (CONFIG_TINYUSB_HID_BUFSIZE=64).
 // =====================================================================================
 

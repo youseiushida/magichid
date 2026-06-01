@@ -2,14 +2,16 @@
 # =====================================================================================
 #  gen_protocol.py  --  derive protocol constants + golden vectors from spec/protocol.yaml
 # =====================================================================================
-#  Single source: spec/protocol.yaml. This generates (so C and Python never drift):
+#  Single source: spec/protocol.yaml. This generates:
 #    - mh_protocol_defs.h                            C constants (firmware)
-#    - reference-client/magichid_bridge/_defs.py     Python constants (if that dir exists)
 #    - spec/protocol_vectors.txt                     golden conformance vectors
+#    - reference-client/magichid_bridge/_defs.py     Python constants -- ONLY if such a
+#                                                    client dir exists alongside; skipped
+#                                                    otherwise (the contract is self-sufficient)
 #
-#  The framing ALGORITHM (CRC16/COBS) is hand-written in mh_protocol.h (C) and
-#  protocol.py (Python); a self-contained copy lives here only to MINT the golden
-#  vectors. tools/test_protocol_parity.{c,py} then verify both codecs against them.
+#  The framing ALGORITHM (CRC16/COBS) is hand-written in mh_protocol.h (C); a self-contained
+#  copy lives here only to MINT the golden vectors. tests/test_parity.cpp verifies the C codec
+#  against them; any external client checks itself against the same spec/protocol_vectors.txt.
 #
 #  Run:  python tools/gen_protocol.py
 # =====================================================================================

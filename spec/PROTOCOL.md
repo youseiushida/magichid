@@ -1,13 +1,15 @@
 # MagicHID UART Protocol — Wire Specification
 
 This document is the **contract**. Anyone can build a client in any language from this
-file alone — the Python `reference-client/` is just one implementation and is optional.
+contract alone (this file plus the per-profile layout and the vectors).
 
 - **Machine-readable source of truth:** [`protocol.yaml`](protocol.yaml) (constant values).
 - **Conformance oracle:** [`protocol_vectors.txt`](protocol_vectors.txt) — your codec must
   reproduce every vector byte-for-byte.
-- **Report table:** [`reports.json`](reports.json) (generated from the HID descriptor), or
-  fetch it at runtime via `GET_CAPS`.
+- **Report layout depends on the active profile** (§5). The default `universal` profile's
+  table is [`reports.json`](reports.json) (generated from the HID descriptor); the `horipad`
+  profile's layout is [`horipad.md`](horipad.md). Either way, fetch the active profile's
+  report table at runtime via `GET_CAPS`.
 - Protocol version: **1** (reported in `STATUS`).
 
 ---
@@ -113,7 +115,29 @@ All multi-byte integers are **little-endian**.
 - **Identity/profiles.** `SET_IDENTITY` persists VID/PID/version/profile and **reboots**
   the bridge for a clean re-enumeration. The operator must reconnect the serial port.
 
-## 5. Recommended client session
+## 5. Profiles (device backends)
+
+The bridge ships several **device backends**; exactly one is active per boot. `SET_IDENTITY`'s
+`profile` byte selects one and the device **reboots** to re-enumerate as that device. Each
+backend defines its own USB identity, HID report descriptor, and report layout, so the report
+table and field layout depend on the active profile (query it at runtime with `GET_CAPS`).
+
+| profile | name | identity | reports | layout |
+|---|---|---|---|---|
+| `0` | universal | core / `SET_IDENTITY` default | 35 reports, IDs 1..35 | [`reports.json`](reports.json) + HUT 1.7 |
+| `1` | horipad | VID `0x0F0D` / PID `0x00C1` | one report, **no Report ID**, 8 bytes | [`horipad.md`](horipad.md) |
+
+- **universal** — the 35-page chimera relay. `SEND_REPORT` payload = `[report_id][hid data…]`;
+  sizes come from `reports.json` / `GET_CAPS`, field layout follows the HID descriptor / HUT
+  (see the §6 examples).
+- **horipad** — a Nintendo Switch wired gamepad. The descriptor carries **no Report ID**, so the
+  `SEND_REPORT` payload is the bare 8-byte controller state and the device sends with report
+  id `0`. The full byte/bit layout is the contract in [`horipad.md`](horipad.md).
+
+`GET_CAPS` always returns the **active** profile's table: universal → 35 entries; horipad → a
+single `[id=0, in_len=8, out_len=0, feat_len=0]`.
+
+## 6. Recommended client session
 
 ```
 open serial (1 Mbps)
@@ -129,9 +153,9 @@ Report payload **layout** (which byte is which field) follows the HID descriptor
 HUT (e.g. keyboard = `[modifier][reserved][k1..k6]`, the TinyUSB mouse =
 `[buttons][x][y][wheel][pan]`). Report **sizes** come from `reports.json` or `CAPS`.
 
-## 6. Conformance
+## 7. Conformance
 
 Your codec is correct iff, for every line of `protocol_vectors.txt`:
 `build_frame(type, seq, payload)` equals the `FRAME` hex, and `cobs_encode(input)` equals
-the `COBS` hex (and the inverses round-trip). See `tests/run.ps1` (doctest: C codec + policy) and `tools/test_protocol_parity.py` for
-reference checkers.
+the `COBS` hex (and the inverses round-trip). `tests/run.ps1` (doctest: C codec + policy +
+horipad layout) is the reference checker.

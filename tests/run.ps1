@@ -1,10 +1,10 @@
 # =====================================================================================
 #  tests/run.ps1  --  host-side regression tests (NO ESP32). Builds the pure firmware
 #  logic with host g++ + doctest and checks it against the spec oracles:
-#     policy  ->  mh_policy.h    vs  spec/PROTOCOL.md (3.4 / 4)
-#     codec   ->  mh_protocol.h  vs  spec/protocol_vectors.txt
-#  Optionally also runs the (disposable) Python reference-client codec against the SAME
-#  vectors, if Python + reference-client are present. Exit code: 0 = all pass.
+#     policy  ->  mh_policy.h     vs  spec/PROTOCOL.md (3.4 / 4)
+#     codec   ->  mh_protocol.h   vs  spec/protocol_vectors.txt
+#     layout  ->  horipad_proto.h vs  spec/horipad.md
+#  Exit code: 0 = all pass.
 # =====================================================================================
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
@@ -20,15 +20,6 @@ try {
 
   & $bin
   $rc = $LASTEXITCODE
-
-  $py = (Get-Command python -ErrorAction SilentlyContinue).Source
-  if ($py -and (Test-Path "reference-client/magichid_bridge/protocol.py")) {
-    Write-Host "`n[python reference-client parity]"
-    & $py tools/test_protocol_parity.py
-    if ($LASTEXITCODE -ne 0) { $rc = 1 }
-  } else {
-    Write-Host "`n(python/reference-client absent -- skipping optional Python parity)" -ForegroundColor DarkGray
-  }
 
   if ($rc -ne 0) { Write-Host "`nTESTS FAILED" -ForegroundColor Red; exit 1 }
   Write-Host "`nALL TESTS PASSED" -ForegroundColor Green

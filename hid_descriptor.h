@@ -52,7 +52,7 @@
 //      Logical Max 2^31-1-> 0x27,0xFF,0xFF,0xFF,0x7F
 // =====================================================================================
 //
-//  /!\ RUNTIME / BUILD NOTES for ESP32-S3 + Adafruit TinyUSB  (full details: README.md)
+//  /!\ RUNTIME / BUILD NOTES for ESP32-S3 + Adafruit TinyUSB
 //  ------------------------------------------------------------------------------------
 //  * HID single-report ceiling = CONFIG_TINYUSB_HID_BUFSIZE (default 64 on
 //    arduino-esp32 3.3.x). The buffer holds 1 Report-ID byte + payload, so usable data
@@ -60,7 +60,7 @@
 //        Report 24 Monitor (EDID Feature 130 B), Report 31 MSR (Input 229 B),
 //        Report 35 FIDO (64 B data + 1 ID = 65 B).  The other 32 reports work as-is.
 //    (Not changeable via a -D flag in Arduino IDE -- the buffer lives in the precompiled
-//     core lib; enlarge via ESP-IDF menuconfig or a rebuilt core. See README.md.)
+//     core lib; enlarge via ESP-IDF menuconfig or a rebuilt core.)
 //  * Reports 27 Power / 28 Battery make a host OS bind its power/UPS stack. Send safe
 //    values (100% / AC present) or don't transmit them during bring-up, or the OS may
 //    show a battery icon / act on a low-battery reading.
@@ -819,7 +819,7 @@ uint8_t const desc_hid_report[] =
   //  UPS. If the firmware streams a critical / on-battery / 0% state (or sends garbage
   //  at startup), the OS can pop a battery icon and even move toward sleep/shutdown.
   //  Send safe values (100% / AC present) ASAP, or don't transmit this report ID while
-  //  testing.  (See README.md.)
+  //  testing.
   // ===================================================================================
   0x05, 0x84,        // Usage Page (Power)                          -- HUT 30, page 0x84
   0x09, 0x04,        // Usage (UPS)                                 -- HUT 30, ID 0x04 (CA)
@@ -965,7 +965,7 @@ uint8_t const desc_hid_report[] =
   //  Track sizes follow ISO/IEC 7811 maxima (79 / 40 / 107 characters).
   //  *** OVERSIZE: this Input report is 229 B, far over the 63 B usable payload of the
   //  default 64 B HID buffer -- won't transmit until the buffer is enlarged, or shrink/
-  //  split the track-data fields.  (See README.md.) ***
+  //  split the track-data fields. ***
   // ===================================================================================
   0x05, 0x8E,        // Usage Page (Magnetic Stripe Reader)         -- HUT 34, page 0x8E
   0x09, 0x01,        // Usage (MSR Device Read-Only)                -- HUT 34, ID 0x01 (CA)
@@ -1076,7 +1076,7 @@ uint8_t const desc_hid_report[] =
   //  *** Two consequences of the shared Report ID: (1) 64 B data + 1 ID = 65 B exceeds
   //  the 63 B usable payload of the default 64 B HID buffer, so it won't send as-is;
   //  (2) CTAPHID forbids a Report ID and needs exact 64 B frames, so it won't work as a
-  //  real authenticator here. For real FIDO use a dedicated HID interface. (README.md) ***
+  //  real authenticator here. For real FIDO use a dedicated HID interface. ***
   // ===================================================================================
   0x06, 0xD0, 0xF1,  // Usage Page (FIDO Alliance, 0xF1D0)          -- HUT 38, page 0xF1D0
   0x09, 0x01,        // Usage (U2F Authenticator Device)            -- HUT 38, ID 0x01 (CA)
