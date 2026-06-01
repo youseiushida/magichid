@@ -8,10 +8,11 @@
 // =====================================================================================
 #include "backends.h"
 #include "backend_universal.h"
+#include "backend_horipad.h"
 
 const DeviceBackend *const BACKENDS[] = {
-  &BACKEND_UNIVERSAL,                       // profile 0
-  // &BACKEND_PROCON,                       // profile 1 (added in a later step)
+  &BACKEND_UNIVERSAL,                       // profile 0  (35-page chimera relay)
+  &BACKEND_HORIPAD,                         // profile 1  (Nintendo Switch HORIPAD gamepad)
 };
 
 const uint8_t N_BACKENDS = sizeof(BACKENDS) / sizeof(BACKENDS[0]);

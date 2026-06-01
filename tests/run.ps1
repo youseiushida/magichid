@@ -15,7 +15,7 @@ try {
 
   $bin = Join-Path $env:TEMP "mh_tests.exe"
   Write-Host "[build] $cxx -std=c++17 -I. tests/*.cpp"
-  & $cxx -std=c++17 -O1 -I. tests/test_main.cpp tests/test_policy.cpp tests/test_parity.cpp -o $bin
+  & $cxx -std=c++17 -O1 -I. tests/test_main.cpp tests/test_policy.cpp tests/test_parity.cpp tests/test_horipad.cpp -o $bin
   if ($LASTEXITCODE -ne 0) { Write-Host "BUILD FAILED" -ForegroundColor Red; exit 1 }
 
   & $bin
