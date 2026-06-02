@@ -14,9 +14,7 @@
 #
 #  relative/absolute is derived straight from each descriptor (the HID Input item's
 #  Relative bit), so NO per-report annotation is needed -- adding a backend "just works".
-#  The 3 universal reports built from TinyUSB macros (Mouse/Keyboard/Consumer) are not
-#  expanded in the descriptor, so their sizes AND relative-ness come from MACRO_SIZES (the
-#  real TUD_HID_REPORT_DESC_* templates).
+#  All macros have been expanded to raw HID items; every report is parsed directly.
 #
 #  Run:  uv run tools/gen_reports.py
 # =====================================================================================
@@ -40,24 +38,18 @@ PAGE = {
     33: 0x91, 34: 0x92, 35: 0xF1D0,
 }
 
-# universal reports built from TinyUSB macros (not expanded in the descriptor): sizes and
-# relative-ness come from the real templates. The MOUSE moves X/Y/wheel/pan RELATIVELY.
-MACRO_SIZES = {
-    1:  {"in": 5, "out": 0, "feat": 0, "rel": True},   # MOUSE (Generic Desktop): rel X/Y/wheel/pan
-    7:  {"in": 8, "out": 1, "feat": 0, "rel": False},  # KEYBOARD: absolute
-    12: {"in": 2, "out": 0, "feat": 0, "rel": False},  # CONSUMER: absolute (usage array)
-}
-
 # ---- profiles (mirror backends.cpp): each has one HID descriptor array to parse ----------
+# All reports are expressed as raw HID short-item bytes (no TinyUSB macros remain),
+# so the parser can extract every size / relative-flag directly from the descriptor.
 PROFILES = [
     {  # profile 0
         "name": "universal", "src": "hid_descriptor.h", "array": "desc_hid_report",
-        "use_enum": True, "macros": MACRO_SIZES,
+        "use_enum": True,
         "table": "MH_REPORTS", "count": "MH_REPORT_COUNT",   # kept: used by mh_policy.h
     },
     {  # profile 1
         "name": "horipad", "src": "backend_horipad.cpp", "array": "horipad_hid_desc",
-        "use_enum": False, "macros": {},
+        "use_enum": False,
         "table": "MH_REPORTS_HORIPAD", "count": "MH_REPORTS_HORIPAD_COUNT",
     },
 ]
@@ -151,17 +143,13 @@ def build_profile(prof):
 
     reports = []
     for rid in ids:
-        if rid in prof["macros"]:
-            s = prof["macros"][rid]
-            inb, outb, featb, rel = s["in"], s["out"], s["feat"], s["rel"]
-        else:
-            b = bits.get(rid)
-            if b is None:
-                sys.exit(f"{prof['name']}: report id {rid} not found in descriptor")
-            for k in ("in", "out", "feat"):
-                if b[k] % 8:
-                    sys.exit(f"{prof['name']} report {rid} {k} not byte-aligned: {b[k]} bits")
-            inb, outb, featb, rel = b["in"] // 8, b["out"] // 8, b["feat"] // 8, b["rel"]
+        b = bits.get(rid)
+        if b is None:
+            sys.exit(f"{prof['name']}: report id {rid} not found in descriptor")
+        for k in ("in", "out", "feat"):
+            if b[k] % 8:
+                sys.exit(f"{prof['name']} report {rid} {k} not byte-aligned: {b[k]} bits")
+        inb, outb, featb, rel = b["in"] // 8, b["out"] // 8, b["feat"] // 8, b["rel"]
         reports.append({
             "id": rid,
             "name": id_to_name.get(rid, f"REPORT_{rid}") if prof["use_enum"]

@@ -13,23 +13,19 @@
 //             point at the relevant table. (The spec is copyrighted and not bundled here.)
 //
 //  Design rules followed (per project goal):
-//    1. Where the Adafruit TinyUSB library already ships a battle-tested helper macro
-//       (TUD_HID_REPORT_DESC_MOUSE / _KEYBOARD / _CONSUMER), that macro is used so the
-//       descriptor stays short and standards-correct.  Those three macros respectively
-//       cover the Generic Desktop (0x01), Keyboard/Keypad (0x07) and Consumer (0x0C)
-//       pages.
-//    2. For every other page there is NO standard macro, so a raw little-endian byte
-//       array is hand-authored from the HUT tables.
-//    3. Each page is given a realistic, representative Input / Output / Feature layout
+//    1. Every byte is a raw HID short-item literal — no TinyUSB macros remain.
+//       This allows tools/gen_universal_reports.py to parse the entire descriptor
+//       automatically without any macro special-casing.
+//    2. Each page is given a realistic, representative Input / Output / Feature layout
 //       (e.g. Sensors -> a 3-axis accelerometer, Medical -> ultrasound acquisition
 //       controls, FIDO -> 64-byte CTAPHID packets).
-//    4. Every raw byte is annotated on its own line: which HID item it is, which
+//    3. Every raw byte is annotated on its own line: which HID item it is, which
 //       Usage Page / Usage ID it selects, and the intent behind every Report Size /
 //       Report Count.  The goal is that a human can diff this file against the HUT
 //       table-by-table.
-//    5. All 35 reports live inside a single `uint8_t const desc_hid_report[]`.
-//    6. The Report ID symbols live in the `enum` directly below.
-//    7. The descriptor is balanced (every Collection 0xA1 has a matching End 0xC0) and
+//    4. All 35 reports live inside a single `uint8_t const desc_hid_report[]`.
+//    5. The Report ID symbols live in the `enum` directly below.
+//    6. The descriptor is balanced (every Collection 0xA1 has a matching End 0xC0) and
 //       is valid C array-initializer syntax (no missing commas, no duplicate items).
 //
 //  HID short-item primer (used throughout, so the hex makes sense):
@@ -72,7 +68,8 @@
 #ifndef HID_DESCRIPTOR_H_
 #define HID_DESCRIPTOR_H_
 
-// Pulls in TUD_HID_REPORT_DESC_* helper macros and the HID_REPORT_ID() helper.
+// Needed for the TinyUSB HID runtime (tud_hid_*, HID_REPORT_ID).  The descriptor
+// itself no longer uses any TinyUSB macros — every byte is a raw HID short-item literal.
 // This header is meant to be compiled inside an Arduino / ESP32-S3 sketch that has the
 // Adafruit TinyUSB library installed.
 #include "Adafruit_TinyUSB.h"
@@ -132,14 +129,51 @@ enum {
 uint8_t const desc_hid_report[] =
 {
   // ===================================================================================
-  //  Report 1 : Generic Desktop Page (0x01)  --  via TinyUSB standard MOUSE macro.
-  //  The macro emits: Usage Page (Generic Desktop 0x01), Usage (Mouse 0x02),
-  //  Collection (Application), a Pointer physical collection holding 5 buttons
-  //  (Button Page 0x09, Usage Min/Max 1..5), plus X/Y (0x30/0x31, relative 8-bit),
-  //  Wheel (0x38) and AC Pan (Consumer 0x0238).  This is the canonical Generic Desktop
-  //  representation, so we reuse it verbatim (project rule #1).
+  //  Report 1 : Generic Desktop Page (0x01)  --  Standard HID mouse.
+  //  5 buttons + X/Y/Wheel/Pan (all 8-bit relative).  Formerly TUD_HID_REPORT_DESC_MOUSE
+  //  macro; expanded inline so the code generator can parse every byte without macro
+  //  special-casing.
   // ===================================================================================
-  TUD_HID_REPORT_DESC_MOUSE   ( HID_REPORT_ID(REPORT_ID_GENERIC_DESKTOP) ),
+  0x05, 0x01,        // Usage Page (Generic Desktop)              -- HUT 1, page 0x01
+  0x09, 0x02,        // Usage (Mouse)                             -- HUT 1, ID 0x02 (CA)
+  0xA1, 0x01,        // Collection (Application)
+    0x85, REPORT_ID_GENERIC_DESKTOP, // Report ID (1)
+    0x09, 0x01,                 //   Usage (Pointer)               -- HUT 1, ID 0x01 (CP)
+    0xA1, 0x00,                 //   Collection (Physical)
+      0x05, 0x09,               //     Usage Page (Button)         -- HUT 12, page 0x09
+      0x19, 0x01,               //     Usage Minimum (1)           -- Button 1
+      0x29, 0x05,               //     Usage Maximum (5)           -- Button 5
+      0x15, 0x00,               //     Logical Minimum (0)
+      0x25, 0x01,               //     Logical Maximum (1)
+      0x75, 0x01,               //     Report Size (1 bit)
+      0x95, 0x05,               //     Report Count (5 buttons)
+      0x81, 0x02,               //     Input (Data,Var,Abs)        -- 5 button bits
+      0x95, 0x01,               //     Report Count (1)
+      0x75, 0x03,               //     Report Size (3 bits)
+      0x81, 0x03,               //     Input (Const,Var,Abs)       -- 3-bit pad
+      0x05, 0x01,               //     Usage Page (Generic Desktop)
+      0x09, 0x30,               //     Usage (X)                   -- HUT 1, ID 0x30 (DV)
+      0x09, 0x31,               //     Usage (Y)                   -- HUT 1, ID 0x31 (DV)
+      0x15, 0x81,               //     Logical Minimum (-127)
+      0x25, 0x7F,               //     Logical Maximum (127)
+      0x75, 0x08,               //     Report Size (8 bits)
+      0x95, 0x02,               //     Report Count (2 axes)
+      0x81, 0x06,               //     Input (Data,Var,Rel)        -- X, Y relative
+      0x09, 0x38,               //     Usage (Wheel)               -- HUT 1, ID 0x38 (DV)
+      0x15, 0x81,               //     Logical Minimum (-127)
+      0x25, 0x7F,               //     Logical Maximum (127)
+      0x75, 0x08,               //     Report Size (8 bits)
+      0x95, 0x01,               //     Report Count (1)
+      0x81, 0x06,               //     Input (Data,Var,Rel)        -- Wheel relative
+      0x05, 0x0C,               //     Usage Page (Consumer)       -- HUT 15, page 0x0C
+      0x0A, 0x38, 0x02,         //     Usage (AC Pan)              -- HUT 15, ID 0x0238
+      0x15, 0x81,               //     Logical Minimum (-127)
+      0x25, 0x7F,               //     Logical Maximum (127)
+      0x75, 0x08,               //     Report Size (8 bits)
+      0x95, 0x01,               //     Report Count (1)
+      0x81, 0x06,               //     Input (Data,Var,Rel)        -- Pan relative
+    0xC0,                       //   End Collection (Physical)
+  0xC0,              // End Collection (Application)
 
   // ===================================================================================
   //  Report 2 : Simulation Controls Page (0x02)   [HUT section 5]
@@ -266,13 +300,46 @@ uint8_t const desc_hid_report[] =
   0xC0,              // End Collection
 
   // ===================================================================================
-  //  Report 7 : Keyboard/Keypad Page (0x07)  --  via TinyUSB standard KEYBOARD macro.
-  //  Emits: Usage Page (Generic Desktop), Usage (Keyboard), Collection(Application),
-  //  8 modifier bits (Keyboard page 0xE0..0xE7), 1 reserved byte, 5 LED output bits
-  //  (LED page 0x01..0x05) + 3-bit pad, then a 6-byte key-array (Keyboard page
-  //  0x00..0xFF).  Covers the entire Keyboard/Keypad page, so reuse verbatim (rule #1).
+  //  Report 7 : Keyboard/Keypad Page (0x07)  --  Standard HID boot keyboard.
+  //  8 modifier bits + reserved byte + 6-key rollover array + 5 LED output bits.
+  //  Formerly TUD_HID_REPORT_DESC_KEYBOARD macro; expanded inline so the code
+  //  generator can parse every byte without macro special-casing.
   // ===================================================================================
-  TUD_HID_REPORT_DESC_KEYBOARD( HID_REPORT_ID(REPORT_ID_KEYBOARD) ),
+  0x05, 0x01,        // Usage Page (Generic Desktop)              -- HUT 1, page 0x01
+  0x09, 0x06,        // Usage (Keyboard)                          -- HUT 1, ID 0x06 (CA)
+  0xA1, 0x01,        // Collection (Application)
+    0x85, REPORT_ID_KEYBOARD,  // Report ID (7)
+    0x05, 0x07,                 //   Usage Page (Keyboard/Keypad)  -- HUT 10, page 0x07
+    0x19, 0xE0,                 //   Usage Minimum (224)           -- Left Control
+    0x29, 0xE7,                 //   Usage Maximum (231)           -- Right GUI
+    0x15, 0x00,                 //   Logical Minimum (0)
+    0x25, 0x01,                 //   Logical Maximum (1)
+    0x75, 0x01,                 //   Report Size (1 bit)
+    0x95, 0x08,                 //   Report Count (8 modifiers)
+    0x81, 0x02,                 //   Input (Data,Var,Abs)          -- 8 modifier bits
+    0x95, 0x01,                 //   Report Count (1)
+    0x75, 0x08,                 //   Report Size (8 bits)
+    0x81, 0x03,                 //   Input (Const,Var,Abs)         -- reserved byte
+    0x05, 0x08,                 //   Usage Page (LED)              -- HUT 11, page 0x08
+    0x19, 0x01,                 //   Usage Minimum (1)             -- Num Lock
+    0x29, 0x05,                 //   Usage Maximum (5)             -- Kana
+    0x15, 0x00,                 //   Logical Minimum (0)
+    0x25, 0x01,                 //   Logical Maximum (1)
+    0x75, 0x01,                 //   Report Size (1 bit)
+    0x95, 0x05,                 //   Report Count (5 LEDs)
+    0x91, 0x02,                 //   Output (Data,Var,Abs)         -- 5 LED bits
+    0x95, 0x01,                 //   Report Count (1)
+    0x75, 0x03,                 //   Report Size (3 bits)
+    0x91, 0x03,                 //   Output (Const,Var,Abs)        -- 3-bit pad
+    0x05, 0x07,                 //   Usage Page (Keyboard/Keypad)  -- HUT 10, page 0x07
+    0x19, 0x00,                 //   Usage Minimum (0)
+    0x2A, 0xFF, 0x00,           //   Usage Maximum (255)           -- 2-byte form
+    0x15, 0x00,                 //   Logical Minimum (0)
+    0x26, 0xFF, 0x00,           //   Logical Maximum (255)         -- 2-byte form
+    0x75, 0x08,                 //   Report Size (8 bits)
+    0x95, 0x06,                 //   Report Count (6 key slots)
+    0x81, 0x00,                 //   Input (Data,Array,Abs)        -- 6-key rollover array
+  0xC0,              // End Collection
 
   // ===================================================================================
   //  Report 8 : LED Page (0x08)                    [HUT section 11]
@@ -388,12 +455,23 @@ uint8_t const desc_hid_report[] =
   0xC0,              // End Collection
 
   // ===================================================================================
-  //  Report 12 : Consumer Page (0x0C)  --  via TinyUSB standard CONSUMER macro.
-  //  Emits a Consumer Control (0x0C/0x01) application collection holding one 16-bit
-  //  array field spanning Usage 0x0000..0x03FF -- the standard "consumer control"
-  //  report used for volume, transport, brightness and AC/AL keys.  Reuse (rule #1).
+  //  Report 12 : Consumer Page (0x0C)  --  Standard HID consumer control.
+  //  Single 16-bit array selector covering Usage 0x0000..0x03FF.  Formerly
+  //  TUD_HID_REPORT_DESC_CONSUMER macro; expanded inline so the code generator can
+  //  parse every byte without macro special-casing.
   // ===================================================================================
-  TUD_HID_REPORT_DESC_CONSUMER( HID_REPORT_ID(REPORT_ID_CONSUMER) ),
+  0x05, 0x0C,        // Usage Page (Consumer)                     -- HUT 15, page 0x0C
+  0x09, 0x01,        // Usage (Consumer Control)                  -- HUT 15, ID 0x01 (CA)
+  0xA1, 0x01,        // Collection (Application)
+    0x85, REPORT_ID_CONSUMER,  // Report ID (12)
+    0x15, 0x00,                 //   Logical Minimum (0)
+    0x26, 0xFF, 0x03,           //   Logical Maximum (1023)       -- 2-byte form
+    0x19, 0x00,                 //   Usage Minimum (0)
+    0x2A, 0xFF, 0x03,           //   Usage Maximum (1023)         -- 2-byte form
+    0x75, 0x10,                 //   Report Size (16 bits)
+    0x95, 0x01,                 //   Report Count (1)
+    0x81, 0x00,                 //   Input (Data,Array,Abs)        -- consumer usage selector
+  0xC0,              // End Collection
 
   // ===================================================================================
   //  Report 13 : Digitizers Page (0x0D)            [HUT section 16]
