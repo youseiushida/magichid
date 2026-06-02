@@ -6,11 +6,11 @@ contract alone (this file plus the per-profile layout and the vectors).
 - **Machine-readable source of truth:** [`protocol.yaml`](protocol.yaml) (constant values).
 - **Conformance oracle:** [`protocol_vectors.txt`](protocol_vectors.txt) — your codec must
   reproduce every vector byte-for-byte.
-- **Report layout depends on the active profile** (§5). The default `universal` profile's
-  table is [`reports.json`](reports.json) (generated from the HID descriptor); the `horipad`
-  profile's layout is [`horipad.md`](horipad.md). Either way, fetch the active profile's
-  report table at runtime via `GET_CAPS`.
-- Protocol version: **1** (reported in `STATUS`).
+- **Report layout depends on the active profile** (§5). [`reports.json`](reports.json) holds
+  every profile's report table (sizes + a `relative` flag), generated from each descriptor;
+  the `horipad` byte/bit layout is detailed in [`horipad.md`](horipad.md). Either way, fetch
+  the active profile's table at runtime via `GET_CAPS`.
+- Protocol version: **2** (reported in `STATUS`).
 
 ---
 
@@ -61,7 +61,7 @@ All multi-byte integers are **little-endian**.
 | `0x83` | NACK | `[seq:1][reason:1]` | A command was rejected |
 | `0x84` | HOST_EVENT | `[report_id][report_type:1][data…]` | Relays a host→device OUTPUT/FEATURE write |
 | `0x85` | LOG | `[ascii…]` | Human-readable diagnostic |
-| `0x86` | CAPS | `N × [id][in_len][out_len][feat_len]` | The full report table |
+| `0x86` | CAPS | `N × [id][in_len][out_len][feat_len][flags:1]` | The active profile's report table |
 
 ### 3.3 STATUS flags (bitfield)
 
@@ -76,7 +76,7 @@ All multi-byte integers are **little-endian**.
 
 | Code | Name | Meaning |
 |---|---|---|
-| 1 | BAD_CRC | Frame failed CRC (note: `SEQ` is 0, unmatchable) |
+| 1 | BAD_CRC | Frame failed CRC — **best-effort diagnostic only**: `SEQ` is 0 (unmatchable), so recover via the ACK timeout, not this NACK |
 | 2 | BAD_LEN | Payload length invalid for the message/report |
 | 3 | UNKNOWN_ID | Report ID not in the descriptor |
 | 4 | NOT_READY | USB not mounted / endpoint busy |
@@ -88,6 +88,12 @@ All multi-byte integers are **little-endian**.
 
 `INPUT=1, OUTPUT=2, FEATURE=3` (USB HID standard).
 
+### 3.6 CAPS report flags (bitfield, per entry)
+
+| Bit | Name | Meaning |
+|---|---|---|
+| `0x01` | RELATIVE | The report's INPUT contains a relative field (e.g. mouse move/wheel). A client **must** drive it in reliable mode (§4); absolute reports may use fire-and-forget. |
+
 ## 4. Semantics
 
 - **Sizes.** `max_payload = 192` (logical payload). `hid_max_payload = 63`
@@ -97,23 +103,43 @@ All multi-byte integers are **little-endian**.
 - **Handshake / readiness (order-independent).** The operator may connect before or after
   the target. To learn readiness, send `PING` and read `STATUS`; proceed when
   `MOUNTED|READY` are set. The device also emits `STATUS` on every mount/unmount change.
-- **Reliability.** For guaranteed delivery: assign a `SEQ`, send, wait for `ACK[seq]`;
-  on timeout **retransmit the same SEQ**. The device is **idempotent per SEQ** — a
-  retransmit of an already-applied SEND_REPORT is re-ACKed but **not re-applied** (so a
-  lost ACK never double-applies a *relative* report such as a mouse move). For
-  fire-and-forget, ignore ACKs; rely on **full-state sending** (below) for self-healing.
+- **Reliability.** For guaranteed delivery: assign a `SEQ` (1..255), send, wait for
+  `ACK[seq]`; on timeout **retransmit the same SEQ**. The device is **idempotent per SEQ**:
+  it remembers the **last 16 applied SEQs** (the dedup window, `dedup_window` in
+  `protocol.yaml`) and re-ACKs but does **not** re-apply any it has already seen, so a lost
+  ACK never double-applies a *relative* report such as a mouse move. Two client rules follow:
+  - **Keep your outstanding un-ACKed window below 16.** A deeper pipeline can outrun the
+    dedup memory and double-apply; the simplest safe client keeps **one** SEND_REPORT in
+    flight at a time. (The window is a sliding anti-replay window over the 1-byte SEQ — sized
+    above any realistic in-flight burst yet far below the 255-SEQ wrap point, so a reused SEQ
+    is never mistaken for a duplicate.)
+  - **Relative reports (mouse move/wheel) MUST use reliable mode.** A client knows which
+    reports are relative from the `RELATIVE` flag in `CAPS` / `reports.json` (§3.6), so this
+    rule is machine-enforceable — no hard-coding. Absolute/full-state reports (keyboard,
+    gamepad, touch coordinates) are idempotent anyway, so a re-applied duplicate is harmless
+    and fire-and-forget is fine for them.
+  For fire-and-forget, ignore ACKs and rely on **full-state sending** (below) for self-healing.
+- **SEQ semantics.** Replies echo the request's `SEQ`: `ACK`, `NACK`, and `CAPS` all carry
+  the `SEQ` of the command they answer. Unsolicited notifications use `SEQ=0`: `STATUS`
+  (including the one sent in reply to `PING`), `HOST_EVENT`, and `LOG`. So `PING` does **not**
+  correlate to a specific reply — `STATUS` is a current-state **snapshot**; poll `PING` and
+  use the most recent `STATUS`.
 - **Full-state principle.** HID is stateful. Always send the *complete current* report
   (e.g. the whole keyboard modifier+keys), not deltas, so a dropped frame self-heals on
   the next send. Hold a key by re-sending its full state periodically (< watchdog timeout).
 - **Safety.** If no valid frame arrives for the watchdog timeout (~500 ms) while any report
   is held non-zero, the device auto-releases them (sets `WATCHDOG`). `RELEASE_ALL` forces
   the same. On unmount, all held state is dropped.
-- **Bidirectional.** The target host may write OUTPUT (e.g. keyboard LEDs) or FEATURE
-  reports; the device relays each as `HOST_EVENT`. For host `GET_REPORT(FEATURE)` the
-  device answers instantly from a cache the operator fills with `SET_FEATURE` (so the
-  operator is the source of truth; the device just caches + serves).
-- **Identity/profiles.** `SET_IDENTITY` persists VID/PID/version/profile and **reboots**
-  the bridge for a clean re-enumeration. The operator must reconnect the serial port.
+- **Bidirectional (best-effort up-link).** The target host may write OUTPUT (e.g. keyboard
+  LEDs) or FEATURE reports; the device relays each as `HOST_EVENT`. **Device→operator
+  notifications (`HOST_EVENT`, `LOG`) are best-effort — no ACK, no delivery guarantee.** That
+  is safe because the operator is the source of truth for FEATURE state: it pushes values with
+  `SET_FEATURE`, which the device caches and serves instantly on host `GET_REPORT(FEATURE)`,
+  so a dropped `HOST_EVENT` self-corrects on the next host write or cache push.
+- **Identity/profiles.** `SET_IDENTITY` persists VID/PID/version/profile, **`ACK`s the command
+  (flushing the ACK first), then reboots after a short delay** for a clean re-enumeration. The
+  operator should wait for the `ACK`, then reconnect the serial port — a missing ACK means the
+  frame was lost (resend); the device only reboots after ACKing.
 
 ## 5. Profiles (device backends)
 
@@ -135,7 +161,9 @@ table and field layout depend on the active profile (query it at runtime with `G
   id `0`. The full byte/bit layout is the contract in [`horipad.md`](horipad.md).
 
 `GET_CAPS` always returns the **active** profile's table: universal → 35 entries; horipad → a
-single `[id=0, in_len=8, out_len=0, feat_len=0]`.
+single `[id=0, in_len=8, out_len=0, feat_len=0, flags=0]`. The `CAPS` reply carries the
+`GET_CAPS` `SEQ`, is a single frame (5 bytes/entry; the 35-entry table is 175 B < the 192 B
+max), and is all-or-nothing — on a CRC drop, simply re-request.
 
 ## 6. Recommended client session
 

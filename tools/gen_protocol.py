@@ -62,10 +62,10 @@ def build_frame(mtype, seq, payload):
 # ---- golden vector inputs (chosen to exercise zeros, the COBS 0xFF path, empty) -------
 FRAME_VECS = [
     (0x01, 5, [7, 0, 0, 4, 0, 0, 0, 0, 0]),                  # SEND_REPORT keyboard 'a'
-    (0x81, 0, [0x05, 0x01]),                                 # STATUS MOUNTED|READY, ver 1
+    (0x81, 0, [0x05, 0x02]),                                 # STATUS MOUNTED|READY, ver 2
     (0x84, 0, [7, 2, 1]),                                    # HOST_EVENT kbd LED
     (0x02, 1, []),                                           # PING (empty)
-    (0x86, 1, [(i * 7 + 1) & 0xFF for i in range(140)]),     # CAPS-sized
+    (0x86, 1, [(i * 7 + 1) & 0xFF for i in range(175)]),     # CAPS-sized (v2: 5*35 entries)
 ]
 COBS_VECS = [
     [1 + (i % 200) for i in range(300)],                     # > 254 nonzero -> 0xFF path
@@ -85,7 +85,8 @@ def emit_defs_h(spec):
          f"#define MH_PROTO_VERSION    {spec['meta']['proto_version']}",
          f"#define MH_DELIM            0x{spec['framing']['delimiter']:02X}",
          f"#define MH_MAX_PAYLOAD      {spec['limits']['max_payload']}",
-         f"#define MH_HID_MAX_PAYLOAD  {spec['limits']['hid_max_payload']}", "",
+         f"#define MH_HID_MAX_PAYLOAD  {spec['limits']['hid_max_payload']}",
+         f"#define MH_DEDUP_WINDOW     {spec['limits']['dedup_window']}", "",
          "// message types"]
     for m in spec["messages"]:
         L.append(f"#define MH_T_{m['name']:<14} 0x{m['code']:02X}")
@@ -95,6 +96,9 @@ def emit_defs_h(spec):
     L += ["", "// NACK reasons"]
     for k, v in spec["nack_reasons"].items():
         L.append(f"#define MH_NACK_{k:<13} {v}")
+    L += ["", "// report flags (the [flags] byte of each CAPS entry)"]
+    for k, v in spec["report_flags"].items():
+        L.append(f"#define MH_REPORT_FLAG_{k:<9} 0x{v:02X}")
     L += ["", "#endif // MH_PROTOCOL_DEFS_H_", ""]
     open(OUT_DEFS_H, "w", encoding="utf-8", newline="\n").write("\n".join(L))
     return OUT_DEFS_H

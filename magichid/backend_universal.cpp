@@ -19,6 +19,7 @@
 #include "mh_protocol.h"      // MH_T_*, MH_NACK_*, MH_HID_MAX_PAYLOAD
 #include "mh_reports.h"       // MH_REPORTS[], mh_report_info_t, MH_REPORT_COUNT
 #include "mh_policy.h"        // mh_find_info / mh_classify_send / mh_report_nonzero (pure)
+#include "mh_caps.h"          // mh_emit_caps (shared CAPS serializer)
 #include "hid_descriptor.h"   // desc_hid_report[]
 
 // ---- injected core services ----------------------------------------------------------
@@ -26,7 +27,22 @@ static const CoreServices *sys = nullptr;
 
 // ---- held-input tracking (for watchdog auto-release) ---------------------------------
 static bool    g_held[256];           // g_held[report_id] = currently non-zero (pressed)
-static uint8_t g_last_send_seq = 0;   // last successfully-sent seq; dedup retransmits (1..255)
+
+// ---- idempotency window: suppress duplicate SEND_REPORT retransmits without re-applying
+//  them. Only RELATIVE reports actually need this (a mouse move whose ACK was lost must not
+//  be counted twice); absolute/full-state reports are idempotent regardless.
+//
+//  It is a sliding anti-replay window over the 1-byte SEQ (1..255), NOT "bigger is safer":
+//    * LOWER bound -- must exceed the deepest burst of un-ACKed SEND_REPORTs a client keeps
+//      outstanding, or a late retransmit of an older SEQ is already forgotten and re-applied.
+//    * UPPER bound -- must stay well below 255, or a SEQ that is legitimately REUSED after a
+//      full wrap is still remembered and a real command is dropped as a "duplicate"
+//      (255 is the worst possible value: it is exactly the wrap point).
+//  MH_DEDUP_WINDOW (=16, from spec/protocol.yaml) sits far from both walls: on a 1 Mbps link
+//  only a handful are ever in flight, and it tolerates ~239 lost frames per wrap before the
+//  upper bound bites. Clients must keep their un-ACKed pipeline below this (PROTOCOL.md).
+static uint8_t g_recent_seq[MH_DEDUP_WINDOW];   // ring of recently-applied seqs (0 = empty)
+static uint8_t g_recent_pos = 0;                // next ring slot to overwrite
 
 // ---- feature answer cache (client-supplied; served on host GET_REPORT(Feature)) ------
 struct FCache { uint8_t id; uint8_t len; uint8_t data[MH_HID_MAX_PAYLOAD]; };
@@ -56,21 +72,33 @@ static bool send_report_padded(const mh_report_info_t *info,
   return ok;
 }
 
+// Idempotency-window membership / insert (see MH_DEDUP_WINDOW above). SEQ 0 is never a
+// command SEQ, so 0 doubles as the "empty slot" sentinel and is never stored or matched.
+static bool seq_recently_applied(uint8_t seq) {
+  for (uint8_t i = 0; i < MH_DEDUP_WINDOW; i++) if (g_recent_seq[i] == seq) return true;
+  return false;
+}
+static void remember_seq(uint8_t seq) {
+  g_recent_seq[g_recent_pos] = seq;
+  g_recent_pos = (uint8_t)((g_recent_pos + 1) % MH_DEDUP_WINDOW);
+}
+
 // =====================================================================================
 //  DeviceBackend callbacks
 // =====================================================================================
 static void u_begin(const CoreServices *s) {
   sys = s;
   memset(g_held, 0, sizeof(g_held));
-  g_last_send_seq = 0;
+  memset(g_recent_seq, 0, sizeof(g_recent_seq));   // 0 = empty (no SEQ remembered yet)
+  g_recent_pos = 0;
   // g_fcache / g_hq are static-zero-initialized at load.
 }
 
 static void u_on_operator(uint8_t seq, const uint8_t *p, uint32_t plen) {
   if (plen < 1) { sys->nack(seq, MH_NACK_BAD_LEN); return; }
-  // Idempotent retransmit: if this seq was already applied, just re-ACK. Prevents a lost
-  // ACK from double-applying RELATIVE reports (e.g. mouse move counted twice).
-  if (seq != 0 && seq == g_last_send_seq) { sys->ack(seq); return; }
+  // Idempotent retransmit: if this seq is still in the dedup window, just re-ACK (don't
+  // re-apply). Prevents a lost ACK from double-applying RELATIVE reports (e.g. mouse move).
+  if (seq != 0 && seq_recently_applied(seq)) { sys->ack(seq); return; }
   uint8_t id = p[0];
   const uint8_t *data = p + 1;
   uint32_t dlen = plen - 1;
@@ -78,8 +106,10 @@ static void u_on_operator(uint8_t seq, const uint8_t *p, uint32_t plen) {
   uint8_t reason = mh_classify_send(info, dlen);   // pure policy (spec/PROTOCOL.md §3.4)
   if (reason)            { sys->nack(seq, reason);            return; }
   if (!sys->hid_ready()) { sys->nack(seq, MH_NACK_NOT_READY); return; }
-  if (send_report_padded(info, data, (uint8_t)dlen)) { g_last_send_seq = seq; sys->ack(seq); }
-  else sys->nack(seq, MH_NACK_NOT_READY);
+  if (send_report_padded(info, data, (uint8_t)dlen)) {
+    if (seq != 0) remember_seq(seq);
+    sys->ack(seq);
+  } else sys->nack(seq, MH_NACK_NOT_READY);
 }
 
 static void u_on_set_feature(uint8_t seq, const uint8_t *p, uint32_t plen) {
@@ -102,15 +132,7 @@ static void u_on_set_feature(uint8_t seq, const uint8_t *p, uint32_t plen) {
 }
 
 static void u_get_caps(uint8_t seq) {
-  uint8_t p[4 * MH_REPORT_COUNT];
-  uint32_t n = 0;
-  for (uint8_t i = 0; i < MH_REPORT_COUNT; i++) {
-    p[n++] = MH_REPORTS[i].id;
-    p[n++] = MH_REPORTS[i].in_len;
-    p[n++] = MH_REPORTS[i].out_len;
-    p[n++] = MH_REPORTS[i].feat_len;
-  }
-  sys->tx(MH_T_CAPS, seq, p, n);
+  mh_emit_caps(sys, seq, MH_REPORTS, MH_REPORT_COUNT);   // 35 x [id,in,out,feat,flags]
 }
 
 // Host writes an OUTPUT/FEATURE report (e.g. keyboard LEDs, LampArray) -> queue for relay.

@@ -22,6 +22,7 @@
 #include "device_backend.h"
 #include "backend_horipad.h"
 #include "mh_protocol.h"      // MH_T_CAPS, MH_NACK_BAD_LEN, MH_NACK_NOT_READY
+#include "mh_caps.h"          // mh_emit_caps + the generated MH_REPORTS_HORIPAD table
 #include "horipad_proto.h"    // horipad_report_t + button/dpad/neutral helpers
 
 // ---- injected core services ----------------------------------------------------------
@@ -100,10 +101,9 @@ static void hp_on_operator(uint8_t seq, const uint8_t *p, uint32_t plen) {
   else                   sys->nack(seq, MH_NACK_NOT_READY);
 }
 
-// One report, id 0: [id=0][in=8][out=0][feat=0].
+// One report, id 0: [id=0][in=8][out=0][feat=0][flags=0] (absolute; from the generated table).
 static void hp_get_caps(uint8_t seq) {
-  uint8_t p[4] = { 0, HORIPAD_REPORT_LEN, 0, 0 };
-  sys->tx(MH_T_CAPS, seq, p, 4);
+  mh_emit_caps(sys, seq, MH_REPORTS_HORIPAD, MH_REPORTS_HORIPAD_COUNT);
 }
 
 // Watchdog / unmount: return the pad to NEUTRAL (centered sticks, no buttons) and send it.

@@ -21,7 +21,7 @@
 
 // ---- protocol constants (GENERATED from spec/protocol.yaml; edit there, not here) ----
 #include "mh_protocol_defs.h"   // MH_DELIM, MH_T_*, MH_ST_*, MH_NACK_*, MH_PROTO_VERSION,
-                                // MH_MAX_PAYLOAD, MH_HID_MAX_PAYLOAD
+                                // MH_MAX_PAYLOAD, MH_HID_MAX_PAYLOAD, MH_DEDUP_WINDOW
 
 // ---- derived sizes -------------------------------------------------------------------
 #define MH_MAX_FRAME         (MH_MAX_PAYLOAD + 8)

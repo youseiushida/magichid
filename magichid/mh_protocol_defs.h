@@ -2,10 +2,11 @@
 #ifndef MH_PROTOCOL_DEFS_H_
 #define MH_PROTOCOL_DEFS_H_
 
-#define MH_PROTO_VERSION    1
+#define MH_PROTO_VERSION    2
 #define MH_DELIM            0x00
 #define MH_MAX_PAYLOAD      192
 #define MH_HID_MAX_PAYLOAD  63
+#define MH_DEDUP_WINDOW     16
 
 // message types
 #define MH_T_SEND_REPORT    0x01
@@ -35,5 +36,8 @@
 #define MH_NACK_NOT_SENDABLE  5
 #define MH_NACK_BAD_FRAME     6
 #define MH_NACK_TOO_BIG       7
+
+// report flags (the [flags] byte of each CAPS entry)
+#define MH_REPORT_FLAG_RELATIVE  0x01
 
 #endif // MH_PROTOCOL_DEFS_H_

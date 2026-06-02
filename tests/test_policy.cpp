@@ -12,6 +12,13 @@ TEST_CASE("report table lookup (in_len anchored to spec/reports.json)") {
   REQUIRE(mh_find_info(35));  CHECK(mh_find_info(35)->in_len == 64);  // FIDO
 }
 
+TEST_CASE("relative flag auto-derived from the descriptor (machine-enforceable rule)") {
+  REQUIRE(mh_find_info(1));   // MOUSE (Generic Desktop): relative X/Y/wheel/pan
+  CHECK((mh_find_info(1)->flags & MH_REPORT_FLAG_RELATIVE) != 0);
+  REQUIRE(mh_find_info(7));   // KEYBOARD: absolute
+  CHECK((mh_find_info(7)->flags & MH_REPORT_FLAG_RELATIVE) == 0);
+}
+
 TEST_CASE("SEND_REPORT classification (PROTOCOL.md 3.4)") {
   const mh_report_info_t *kbd  = mh_find_info(7);    // in_len 8
   const mh_report_info_t *led  = mh_find_info(8);    // in_len 0

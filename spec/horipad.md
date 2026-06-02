@@ -29,7 +29,8 @@ serial port, then `PING`/`STATUS` until `MOUNTED|READY`.
 
 The HID descriptor carries **no Report ID**. The `SEND_REPORT` payload is therefore exactly
 **8 bytes** of controller state (the device sends them with report id `0`). `GET_CAPS` returns a
-single entry `[id=0, in_len=8, out_len=0, feat_len=0]`.
+single entry `[id=0, in_len=8, out_len=0, feat_len=0, flags=0]` — **all fields are absolute**
+(the `RELATIVE` flag is 0), so fire-and-forget is safe (full-state sending is still required).
 
 Always send the **complete** 8-byte state (full-state principle, `PROTOCOL.md` §4) — never
 deltas. The watchdog and `RELEASE_ALL` return the pad to **neutral** (below).

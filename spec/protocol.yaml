@@ -10,7 +10,7 @@
 
 meta:
   name: MagicHID
-  proto_version: 1
+  proto_version: 2        # v2: CAPS entries gained a [flags] byte (bit0 = RELATIVE)
 
 # ---- framing -------------------------------------------------------------------------
 # Wire frame:  COBS( [TYPE:1][SEQ:1][PAYLOAD:0..N][CRC16:2 LE] )  +  delimiter(0x00)
@@ -33,6 +33,13 @@ framing:
 limits:
   max_payload: 192        # logical payload max (the CAPS reply is ~140 bytes)
   hid_max_payload: 63     # CFG_TUD_HID_EP_BUFSIZE(64) - 1 report-id byte
+  dedup_window: 16        # SEQ idempotency window: the device remembers the last N applied
+                          # SEQs and re-ACKs (never re-applies) duplicates. See PROTOCOL.md
+                          # "Reliability". It is a sliding window between two walls: N must
+                          # exceed a client's max un-ACKed burst (else a late retransmit is
+                          # forgotten and re-applied) yet stay well below 255 (else a SEQ
+                          # reused after a wrap is mistaken for a duplicate; 255 == the wrap
+                          # point itself). 16 sits far from both on a 1 Mbps link.
 
 # ---- message types -------------------------------------------------------------------
 # dir: c2d = operator PC -> device,  d2c = device -> operator PC
@@ -48,7 +55,7 @@ messages:
   - { name: NACK,         code: 0x83, dir: d2c, payload: "[seq:1][reason:1]" }
   - { name: HOST_EVENT,   code: 0x84, dir: d2c, payload: "[report_id][report_type:1][data...]" }
   - { name: LOG,          code: 0x85, dir: d2c, payload: "[ascii...]" }
-  - { name: CAPS,         code: 0x86, dir: d2c, payload: "N x [id][in_len][out_len][feat_len]" }
+  - { name: CAPS,         code: 0x86, dir: d2c, payload: "N x [id][in_len][out_len][feat_len][flags]" }
 
 # ---- STATUS flag bits ----------------------------------------------------------------
 status_flags:
@@ -72,3 +79,8 @@ hid_report_types:
   INPUT:   1
   OUTPUT:  2
   FEATURE: 3
+
+# ---- report flags (the [flags] byte of each CAPS entry / reports.json "relative") -----
+report_flags:
+  RELATIVE: 0x01   # the report's INPUT contains a relative field (e.g. mouse move/wheel);
+                   # a client MUST drive it in reliable mode (see PROTOCOL.md "Reliability")
