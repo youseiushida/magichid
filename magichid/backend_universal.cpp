@@ -203,6 +203,16 @@ static bool u_any_held() {
   return false;
 }
 
+// New operator session (T_SESSION_OPEN): forget every remembered SEQ. The dedup window is a
+// PER-SESSION anti-replay guard (suppresses a lost-ACK retransmit of a RELATIVE report). A
+// reconnecting client restarts its SEQ at 1, so without this the new session's SEQs collide
+// with the previous session's remembered SEQs and real reports are dropped as "duplicates".
+// Single fixed-size window, cleared in place -> O(1) memory, no per-session accumulation.
+static void u_session_reset() {
+  memset(g_recent_seq, 0, sizeof(g_recent_seq));   // 0 = empty slot
+  g_recent_pos = 0;
+}
+
 // ---- the backend (field order must match struct DeviceBackend) -----------------------
 const DeviceBackend BACKEND_UNIVERSAL = {
   "universal",                              // name
@@ -218,4 +228,5 @@ const DeviceBackend BACKEND_UNIVERSAL = {
   u_task,                                   // task
   u_release_all,                            // release_all
   u_any_held,                               // any_held
+  u_session_reset,                          // session_reset
 };

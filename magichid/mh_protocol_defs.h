@@ -2,7 +2,7 @@
 #ifndef MH_PROTOCOL_DEFS_H_
 #define MH_PROTOCOL_DEFS_H_
 
-#define MH_PROTO_VERSION    2
+#define MH_PROTO_VERSION    3
 #define MH_DELIM            0x00
 #define MH_MAX_PAYLOAD      192
 #define MH_HID_MAX_PAYLOAD  63
@@ -15,12 +15,14 @@
 #define MH_T_GET_CAPS       0x04
 #define MH_T_SET_IDENTITY   0x05
 #define MH_T_SET_FEATURE    0x06
+#define MH_T_SESSION_OPEN   0x07
 #define MH_T_STATUS         0x81
 #define MH_T_ACK            0x82
 #define MH_T_NACK           0x83
 #define MH_T_HOST_EVENT     0x84
 #define MH_T_LOG            0x85
 #define MH_T_CAPS           0x86
+#define MH_T_SESSION        0x87
 
 // STATUS flag bits
 #define MH_ST_MOUNTED      0x01

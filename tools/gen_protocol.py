@@ -62,9 +62,11 @@ def build_frame(mtype, seq, payload):
 # ---- golden vector inputs (chosen to exercise zeros, the COBS 0xFF path, empty) -------
 FRAME_VECS = [
     (0x01, 5, [7, 0, 0, 4, 0, 0, 0, 0, 0]),                  # SEND_REPORT keyboard 'a'
-    (0x81, 0, [0x05, 0x02]),                                 # STATUS MOUNTED|READY, ver 2
+    (0x81, 0, [0x05, 0x03]),                                 # STATUS MOUNTED|READY, ver 3
     (0x84, 0, [7, 2, 1]),                                    # HOST_EVENT kbd LED
     (0x02, 1, []),                                           # PING (empty)
+    (0x07, 1, []),                                           # SESSION_OPEN (empty)
+    (0x87, 0, [0x78, 0x56, 0x34, 0x12]),                     # SESSION epoch=0x12345678 (LE)
     (0x86, 1, [(i * 7 + 1) & 0xFF for i in range(175)]),     # CAPS-sized (v2: 5*35 entries)
 ]
 COBS_VECS = [

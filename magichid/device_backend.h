@@ -47,6 +47,7 @@ struct DeviceBackend {
   void     (*task)();                                                    // periodic (loop ctx)
   void     (*release_all)();                                             // watchdog / unmount
   bool     (*any_held)();                                                // watchdog: anything held?
+  void     (*session_reset)();                                           // T_SESSION_OPEN: drop per-session SEQ dedup state
 };
 
 #endif // MH_DEVICE_BACKEND_H_

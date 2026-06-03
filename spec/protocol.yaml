@@ -10,7 +10,9 @@
 
 meta:
   name: MagicHID
-  proto_version: 2        # v2: CAPS entries gained a [flags] byte (bit0 = RELATIVE)
+  proto_version: 3        # v3: SESSION_OPEN/SESSION handshake scopes the SEQ dedup window
+                          #     to a device-minted epoch (fixes cross-connection SEQ reuse).
+                          # v2: CAPS entries gained a [flags] byte (bit0 = RELATIVE)
 
 # ---- framing -------------------------------------------------------------------------
 # Wire frame:  COBS( [TYPE:1][SEQ:1][PAYLOAD:0..N][CRC16:2 LE] )  +  delimiter(0x00)
@@ -50,12 +52,14 @@ messages:
   - { name: GET_CAPS,     code: 0x04, dir: c2d, payload: "[]" }
   - { name: SET_IDENTITY, code: 0x05, dir: c2d, payload: "[vid:2][pid:2][bcd:2][profile:1]" }
   - { name: SET_FEATURE,  code: 0x06, dir: c2d, payload: "[report_id][data...]" }
+  - { name: SESSION_OPEN, code: 0x07, dir: c2d, payload: "[]" }
   - { name: STATUS,       code: 0x81, dir: d2c, payload: "[flags:1][proto_version:1]" }
   - { name: ACK,          code: 0x82, dir: d2c, payload: "[seq:1]" }
   - { name: NACK,         code: 0x83, dir: d2c, payload: "[seq:1][reason:1]" }
   - { name: HOST_EVENT,   code: 0x84, dir: d2c, payload: "[report_id][report_type:1][data...]" }
   - { name: LOG,          code: 0x85, dir: d2c, payload: "[ascii...]" }
   - { name: CAPS,         code: 0x86, dir: d2c, payload: "N x [id][in_len][out_len][feat_len][flags]" }
+  - { name: SESSION,      code: 0x87, dir: d2c, payload: "[epoch:4 LE]" }
 
 # ---- STATUS flag bits ----------------------------------------------------------------
 status_flags:

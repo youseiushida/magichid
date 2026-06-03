@@ -10,7 +10,7 @@ contract alone (this file plus the per-profile layout and the vectors).
   every profile's report table (sizes + a `relative` flag), generated from each descriptor;
   the `horipad` byte/bit layout is detailed in [`horipad.md`](horipad.md). Either way, fetch
   the active profile's table at runtime via `GET_CAPS`.
-- Protocol version: **2** (reported in `STATUS`).
+- Protocol version: **3** (reported in `STATUS`).
 
 ---
 
@@ -49,6 +49,7 @@ To implement the codec, copy CRC-16/CCITT and standard COBS, then verify against
 | `0x04` | GET_CAPS | *(none)* | Request the report table (`CAPS` reply) |
 | `0x05` | SET_IDENTITY | `[vid:2][pid:2][bcd:2][profile:1]` | Change USB identity/profile; device **reboots** |
 | `0x06` | SET_FEATURE | `[report_id][data…]` | Supply the FEATURE value served on host `GET_REPORT` |
+| `0x07` | SESSION_OPEN | *(none)* | Begin an operator session; device mints an epoch and clears its SEQ dedup window. Reply: `SESSION` |
 
 All multi-byte integers are **little-endian**.
 
@@ -62,6 +63,7 @@ All multi-byte integers are **little-endian**.
 | `0x84` | HOST_EVENT | `[report_id][report_type:1][data…]` | Relays a host→device OUTPUT/FEATURE write |
 | `0x85` | LOG | `[ascii…]` | Human-readable diagnostic |
 | `0x86` | CAPS | `N × [id][in_len][out_len][feat_len][flags:1]` | The active profile's report table |
+| `0x87` | SESSION | `[epoch:4]` | Reply to `SESSION_OPEN`: the device-minted session epoch (LE) |
 
 ### 3.3 STATUS flags (bitfield)
 
@@ -103,11 +105,21 @@ All multi-byte integers are **little-endian**.
 - **Handshake / readiness (order-independent).** The operator may connect before or after
   the target. To learn readiness, send `PING` and read `STATUS`; proceed when
   `MOUNTED|READY` are set. The device also emits `STATUS` on every mount/unmount change.
+- **Sessions.** A client **must** begin each connection by sending `SESSION_OPEN` and waiting
+  for the `SESSION[epoch]` reply (retransmit `SESSION_OPEN` on timeout — it is idempotent).
+  The device mints a fresh `epoch` (monotonic, never repeats within a power cycle) and **clears
+  its SEQ dedup window** at that moment. This is what lets a reconnecting client restart its
+  `SEQ` counter at 1 without colliding with the previous connection's remembered SEQs: the
+  dedup window is **per-session**, scoped to the epoch, so a stale SEQ from a dead connection
+  can never suppress a real report in a new one. A `SESSION` reply also confirms the device is
+  alive and speaking v3+. (A v2 device never replies to `SESSION_OPEN`; a v3 client may fall
+  back to a session-less handshake but then inherits the v2 cross-connection-reuse hazard.)
 - **Reliability.** For guaranteed delivery: assign a `SEQ` (1..255), send, wait for
   `ACK[seq]`; on timeout **retransmit the same SEQ**. The device is **idempotent per SEQ**:
   it remembers the **last 16 applied SEQs** (the dedup window, `dedup_window` in
-  `protocol.yaml`) and re-ACKs but does **not** re-apply any it has already seen, so a lost
-  ACK never double-applies a *relative* report such as a mouse move. Two client rules follow:
+  `protocol.yaml`, **cleared on each `SESSION_OPEN`** — see *Sessions*) and re-ACKs but does
+  **not** re-apply any it has already seen, so a lost ACK never double-applies a *relative*
+  report such as a mouse move. Two client rules follow:
   - **Keep your outstanding un-ACKed window below 16.** A deeper pipeline can outrun the
     dedup memory and double-apply; the simplest safe client keeps **one** SEND_REPORT in
     flight at a time. (The window is a sliding anti-replay window over the 1-byte SEQ — sized
@@ -169,13 +181,19 @@ max), and is all-or-nothing — on a CRC drop, simply re-request.
 
 ```
 open serial (1 Mbps)
-loop: send PING; read STATUS  -> until (MOUNTED and READY)        # handshake
-optionally: send GET_CAPS -> read CAPS                            # discover report table
+send SESSION_OPEN; read SESSION[epoch]  -> retransmit on timeout         # begin session
+loop: send PING; read STATUS  -> until (MOUNTED and READY)               # handshake
+optionally: send GET_CAPS -> read CAPS                                   # discover report table
 to act:  send SEND_REPORT[report_id, full-state bytes]
          (reliable) wait ACK[seq]; on timeout resend same SEQ
 on host LED/feature interest: handle HOST_EVENT; push SET_FEATURE
 on exit: send RELEASE_ALL
 ```
+
+`SESSION_OPEN` **must** come first on every fresh connection: it clears the device's
+per-session SEQ dedup window, so a client that restarts its `SEQ` at 1 each connection
+won't have its first reports silently dropped as "duplicates" of the previous connection
+(see §4 *Sessions*).
 
 Report payload **layout** (which byte is which field) follows the HID descriptor /
 HUT (e.g. keyboard = `[modifier][reserved][k1..k6]`, the TinyUSB mouse =

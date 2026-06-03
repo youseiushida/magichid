@@ -131,4 +131,5 @@ const DeviceBackend BACKEND_HORIPAD = {
   nullptr,                                  // task            (send-on-change; no streaming)
   hp_release_all,                           // release_all
   hp_any_held,                              // any_held
+  nullptr,                                  // session_reset   (no per-session SEQ dedup state)
 };

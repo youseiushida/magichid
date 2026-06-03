@@ -47,6 +47,7 @@ RTC_NOINIT_ATTR uint8_t  g_profile;
 static uint32_t g_last_rx_ms = 0;
 static bool     g_watchdog_fired = false;
 static bool     g_was_mounted = false;
+static uint32_t g_session_epoch = 0;   // device-minted; bumped on each SESSION_OPEN
 
 // ---- UART RX frame accumulator -------------------------------------------------------
 static uint8_t  g_rx[MH_COBS_MAX];
@@ -79,6 +80,14 @@ static void send_nack(uint8_t seq, uint8_t reason) {
   uint8_t p[1] = { reason }; mh_tx(MH_T_NACK, seq, p, 1);
 }
 static void send_log(const char *s) { mh_tx(MH_T_LOG, 0, (const uint8_t *)s, strlen(s)); }
+
+// SESSION reply: the device-minted epoch as 4 LE bytes. The client scopes its SEQ space to
+// this epoch; the device's dedup window was just cleared, so reused SEQs apply cleanly.
+static void send_session(uint32_t epoch) {
+  uint8_t p[4] = { (uint8_t)(epoch & 0xFF), (uint8_t)((epoch >> 8) & 0xFF),
+                   (uint8_t)((epoch >> 16) & 0xFF), (uint8_t)((epoch >> 24) & 0xFF) };
+  mh_tx(MH_T_SESSION, 0, p, 4);
+}
 
 // =====================================================================================
 //  CoreServices: the backend-facing view of the core
@@ -145,6 +154,15 @@ static void process_frame(const uint8_t *src, uint32_t len) {
       else send_nack(seq, MH_NACK_BAD_FRAME);
       break;
     case MH_T_PING:         send_status(); break;
+    case MH_T_SESSION_OPEN: {
+      // New operator session: mint a fresh epoch and drop the per-session SEQ dedup window
+      // so a reconnecting client's SEQs (which restart at 1) are not mistaken for duplicates
+      // of the previous session. millis() is monotonic across a run -> always a new value.
+      g_session_epoch++;
+      if (g_active->session_reset) g_active->session_reset();
+      send_session(g_session_epoch);
+      break;
+    }
     case MH_T_RELEASE_ALL:
       if (g_active->release_all) g_active->release_all();
       send_ack(seq);
